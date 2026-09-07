@@ -4,9 +4,23 @@ Homebrew formulae for the [wolf](https://github.com/wolffe-lang/wolf-lang)
 language and its reference interpreter.
 
 ```sh
-brew tap wolffe-lang/wolf
+brew trust wolffe-lang/wolf
+brew tap   wolffe-lang/wolf
 brew install wolf
 ```
+
+**The `brew trust` line is required, and skipping it produces a
+misleading error.** Homebrew refuses to load formulae from an
+untrusted third-party tap, and reports it as:
+
+```
+Refusing to load formula wolffe-lang/wolf/wolf from untrusted tap wolffe-lang/wolf.
+Error: Cannot tap wolffe-lang/wolf: invalid syntax in tap!
+```
+
+There is no syntax error — both formulae pass `ruby -c`. The second
+line is Homebrew's generic failure message for a tap it declined to
+read. Trust the tap first and it taps cleanly.
 
 | formula | what it is | upstream |
 |---|---|---|
