@@ -81,14 +81,19 @@ class Lobo < Formula
     (testpath/"logs").mkpath
     inreplace testpath/"conf/lobo.conf", "127.0.0.1:8080", "127.0.0.1:#{port}"
 
-    pid = spawn bin/"lobo", "-p", testpath, "-c", "conf/lobo.conf", "-g", "daemon off;"
+    # `serve` is a VERB, not a flag — lobo's own stock config documents it
+    # (`./lobo -c conf/lobo.conf serve`). nginx's `-g "daemon off;"` is
+    # accepted as an option but does not start the server, so a test
+    # written from nginx habit gets a banner and a refused connection.
+    pid = spawn bin/"lobo", "-p", testpath, "-c", "conf/lobo.conf", "serve"
     begin
-      sleep 2
+      sleep 3
       served = shell_output("curl -sf http://127.0.0.1:#{port}/")
       assert_equal (testpath/"html/index.html").read, served
     ensure
-      Process.kill("TERM", pid)
-      Process.wait(pid)
+      system bin/"lobo", "-p", testpath, "-c", "conf/lobo.conf", "-s", "stop"
+      Process.kill("TERM", pid) rescue nil
+      Process.wait(pid) rescue nil
     end
   end
 end
