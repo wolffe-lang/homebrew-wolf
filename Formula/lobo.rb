@@ -64,7 +64,12 @@ class Lobo < Formula
   test do
     # The provenance assertion: a release build names its toolchain and
     # carries no +dev suffix.
-    out = shell_output("#{bin}/lobo -v")
+    #
+    # `2>&1` is required, not incidental: lobo writes -v to STDERR because
+    # nginx does, and matching nginx's stream behaviour is the compat
+    # charter. A test that read stdout alone would compare against "" and
+    # fail while the binary was working perfectly.
+    out = shell_output("#{bin}/lobo -v 2>&1")
     assert_match "lobo/#{version} (built with wolf ", out
     refute_match(/\+dev/, out)
 
