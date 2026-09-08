@@ -1,0 +1,227 @@
+#!/bin/sh
+# doors-fresh — the packaging gate (ws21).
+#
+# EIGHT published packages across two channels now track THREE upstream
+# releases, and every one of them goes stale the instant a tag is cut.
+# A checklist does not notice that; this does. It reads what is
+# PUBLISHED — the live AUR, the live tap, the live GitHub releases — and
+# reds when a package trails its upstream or names a digest the release
+# does not have. It reads nothing from the working tree, so it is honest
+# about the world rather than about somebody's intentions.
+#
+#   tools/doors-fresh              the gate (exit 1 on any red)
+#   tools/doors-fresh --versions   the version leg only (skips digests)
+#   tools/doors-fresh --list       print the package table and exit
+#
+# WHAT IT CHECKS, per row of the table below:
+#
+#   1. VERSION. The version the published package declares equals the
+#      tag of its upstream's latest release. AUR pkgver comes from the
+#      AUR RPC (`Version` is pkgver-pkgrel; the pkgrel is stripped);
+#      formula versions come from the tap's own trunk — `version "X"`
+#      for a binary formula, `tag: "vX"` for a git one.
+#
+#   2. DIGEST. Every sha256 a binary package declares is a digest the
+#      live release actually publishes. This is the one error a stranger
+#      cannot work around: a wrong version is an old lobo, a wrong digest
+#      is `makepkg` refusing to install anything at all. The comparison
+#      is against the release ASSET digests GitHub reports, so nothing is
+#      downloaded and no archive has to be trusted to check itself.
+#
+#   3. REVISION (git formulae only). `revision:` is the commit the tag
+#      points at. Homebrew pins both; a revision that has drifted from
+#      its tag is a formula quietly building something else.
+#
+# WHY IT LIVES WITH THE PACKAGING and not in any of the three product
+# repos: no product repo can see the other two, the AUR gives a package
+# no CI of its own (it is a bare git remote), and the tap is the one
+# repo the packager owns that can run a workflow. Add a channel by
+# adding a row.
+#
+# NEEDS curl and jq, and uses `gh api` when it is on PATH so a CI run
+# spends the workflow token rather than the 60/hr anonymous budget.
+set -u
+
+usage='usage: doors-fresh [--versions | --list]'
+mode=check
+case "${1-}" in
+    "") : ;;
+    --versions) mode=versions ;;
+    --list) mode=list ;;
+    -h|--help) echo "$usage"; exit 0 ;;
+    *) echo "doors-fresh: unknown argument $1" >&2; echo "$usage" >&2; exit 2 ;;
+esac
+
+# channel  package        upstream repo            kind
+# `kind` is what carries a digest: `bin` packages name archives, `git`
+# packages name a tag and a revision.
+packages='
+aur   wolf-lang       wolffe-lang/wolf-lang    git
+aur   wolf-lang-bin   wolffe-lang/wolf-lang    bin
+aur   lupin           wolffe-lang/wolf-interp  git
+aur   lupin-bin       wolffe-lang/wolf-interp  bin
+aur   lobo-bin        wolffe-lang/lobo         bin
+brew  wolf            wolffe-lang/wolf-lang    git
+brew  lupin           wolffe-lang/wolf-interp  git
+brew  lobo            wolffe-lang/lobo         bin
+'
+tap=wolffe-lang/homebrew-wolf
+tap_branch=trunk
+
+if [ "$mode" = list ]; then
+    printf '%-6s %-16s %-26s %s\n' CHANNEL PACKAGE UPSTREAM KIND
+    echo "$packages" | while read -r ch pkg repo kind; do
+        [ -n "${ch:-}" ] || continue
+        printf '%-6s %-16s %-26s %s\n' "$ch" "$pkg" "$repo" "$kind"
+    done
+    exit 0
+fi
+
+for t in curl jq; do
+    command -v "$t" > /dev/null 2>&1 || {
+        echo "doors-fresh: REFUSING — $t is not on PATH; this gate reads live JSON and will not guess" >&2
+        exit 2
+    }
+done
+
+red=0
+fail() { echo "  RED  $1" >&2; red=1; }
+
+fetch() { # fetch <url> — retried; body to stdout, non-zero on error OR empty
+    _body=$(curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors --max-time 60 "$1" 2> /dev/null) || return 1
+    [ -n "$_body" ] || return 1
+    printf '%s\n' "$_body"
+}
+
+fetch_status() { # fetch_status <url> — so a 404 reads as "not published"
+    curl -sSL -o /dev/null -w '%{http_code}' --max-time 30 "$1" 2> /dev/null
+}
+
+gh_api() { # gh_api <path> — the workflow token when gh is here, anonymous otherwise
+    if command -v gh > /dev/null 2>&1; then
+        gh api "$1" 2> /dev/null
+    else
+        curl -fsSL ${GITHUB_TOKEN:+-H "Authorization: Bearer $GITHUB_TOKEN"} \
+            -H 'Accept: application/vnd.github+json' "https://api.github.com/$1"
+    fi
+}
+
+work=$(mktemp -d) || exit 2
+trap 'rm -rf "$work"' EXIT INT TERM
+
+# ---- 1. the live releases, one fetch per upstream ------------------------
+repos=$(echo "$packages" | awk 'NF { print $3 }' | sort -u)
+for repo in $repos; do
+    slug=$(echo "$repo" | tr / _)
+    if ! gh_api "repos/$repo/releases/latest" > "$work/rel.$slug.json" 2> /dev/null; then
+        fail "$repo — the latest release could not be read; the gate cannot say whether anything trails"
+        continue
+    fi
+    tag=$(jq -r '.tag_name // empty' < "$work/rel.$slug.json")
+    [ -n "$tag" ] || { fail "$repo — the latest release has no tag_name"; continue; }
+    echo "$tag" > "$work/tag.$slug"
+    # the digests the release actually publishes, one per line
+    jq -r '.assets[]? | .digest // empty | sub("^sha256:"; "")' \
+        < "$work/rel.$slug.json" | sort -u > "$work/digests.$slug"
+    # the commit the tag points at, for the git formulae
+    gh_api "repos/$repo/commits/$tag" 2>/dev/null \
+        | jq -r '.sha // empty' > "$work/sha.$slug" || : > "$work/sha.$slug"
+    printf 'release  %-26s %-10s %s asset digests\n' "$repo" "$tag" \
+        "$(wc -l < "$work/digests.$slug" | tr -d ' ')"
+done
+[ "$red" = 0 ] || { echo "doors-fresh: FAILED before comparing anything" >&2; exit 1; }
+
+echo ""
+
+# ---- 2. every published package, against those releases ------------------
+echo "$packages" | while read -r ch pkg repo kind; do
+    [ -n "${ch:-}" ] || continue
+    slug=$(echo "$repo" | tr / _)
+    want=$(cat "$work/tag.$slug")           # vX.Y.Z
+    want_bare=${want#v}
+    src="$work/src.$ch.$pkg"
+
+    case "$ch" in
+        aur)
+            # .SRCINFO, not PKGBUILD: it is the file the AUR itself
+            # generates from the PKGBUILD, so pkgver and every sha256sum
+            # are already resolved and no shell has to be interpreted to
+            # read them.
+            url="https://aur.archlinux.org/cgit/aur.git/plain/.SRCINFO?h=$pkg"
+            where="aur/$pkg"
+            ;;
+        brew)
+            url="https://raw.githubusercontent.com/$tap/$tap_branch/Formula/$pkg.rb"
+            where="tap/Formula/$pkg.rb"
+            ;;
+    esac
+
+    # A transient 502 from cgit must not read as "this package trails" —
+    # that is how a gate teaches people to ignore it. Retry, then fail
+    # BY NAME as a fetch failure, which is still a red: a gate that
+    # cannot see is not a gate that passes.
+    if ! fetch "$url" > "$src"; then
+        if [ "$(fetch_status "$url")" = 404 ]; then
+            echo "  RED  $where — NOT PUBLISHED (404)" >&2
+        else
+            echo "  RED  $where — could not be fetched after 3 tries; the gate cannot see this package" >&2
+        fi
+        continue
+    fi
+
+    case "$ch" in
+        aur)  have=$(sed -n 's/^[[:space:]]*pkgver = //p' "$src" | head -1) ;;
+        # A binary formula states `version "X"`; a git one states `tag: "vX"`.
+        brew) have=$(sed -n 's/^[[:space:]]*version "\([^"]*\)".*/\1/p' "$src" | head -1)
+              [ -n "$have" ] || have=$(sed -n 's/^.*tag:[[:space:]]*"v\([^"]*\)".*/\1/p' "$src" | head -1) ;;
+    esac
+
+    if [ -z "$have" ]; then
+        echo "  RED  $where — fetched, but no version could be parsed out of it" >&2
+        continue
+    fi
+    if [ "$have" != "$want_bare" ]; then
+        echo "  RED  $where declares $have; $repo released $want — this package TRAILS" >&2
+        continue
+    fi
+    printf '  ok   %-26s %s\n' "$where" "$have"
+
+    [ "$mode" = check ] || continue
+
+    # -- the digest leg --------------------------------------------------
+    if [ "$kind" = bin ]; then
+        n=0
+        for d in $(grep -Eo '[0-9a-f]{64}' "$src" | sort -u); do
+            n=$((n + 1))
+            if ! grep -qx "$d" "$work/digests.$slug"; then
+                echo "  RED  $where names sha256 $d, which $want does not publish — makepkg/brew will refuse the install outright" >&2
+                continue
+            fi
+            printf '       digest %s ok\n' "$(echo "$d" | cut -c1-16)…"
+        done
+        [ "$n" -gt 0 ] || echo "  RED  $where is a binary package that declares NO sha256" >&2
+    fi
+
+    # -- the revision leg ------------------------------------------------
+    if [ "$kind" = git ] && [ "$ch" = brew ]; then
+        rev=$(sed -n 's/^.*revision:[[:space:]]*"\([0-9a-f]\{40\}\)".*/\1/p' "$src" | head -1)
+        real=$(cat "$work/sha.$slug")
+        if [ -z "$rev" ]; then
+            echo "  RED  $where pins a tag but no revision — Homebrew pins both or trusts the tag not to move" >&2
+        elif [ -n "$real" ] && [ "$rev" != "$real" ]; then
+            echo "  RED  $where pins revision $(echo "$rev" | cut -c1-12) but $want is $(echo "$real" | cut -c1-12) — the formula builds something other than the tag it names" >&2
+        else
+            printf '       revision %s ok\n' "$(echo "$rev" | cut -c1-12)"
+        fi
+    fi
+done > "$work/report" 2>&1
+
+cat "$work/report"
+if grep -q '^  RED ' "$work/report"; then
+    echo ""
+    echo "doors-fresh: FAILED — a published package trails its release or names a digest that is not there." >&2
+    echo "The bump order is in ws21/README.md: upstream tag, then -bin digests, then the source packages, then the tap." >&2
+    exit 1
+fi
+echo ""
+echo "doors-fresh: ok — every published package names its upstream's latest release, and every digest it declares is one that release publishes"
