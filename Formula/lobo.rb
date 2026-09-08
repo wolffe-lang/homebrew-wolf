@@ -53,7 +53,7 @@ class Lobo < Formula
         lobo                      # serves html/ on 127.0.0.1:8080
         lobo -s stop
 
-      `lobo -v` names the toolchain that built it; #{opt_doc}/BUILD records
+      `lobo -v` names the toolchain that built it; #{opt_prefix}/share/doc/lobo/BUILD records
       the same line, the source commit and the pins.
 
       Prebuilt for macOS arm64 and linux x86-64 — the hosts wolf's release
