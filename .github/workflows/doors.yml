@@ -80,7 +80,11 @@ jobs:
           # does not exist there is nothing to trust.
           brew trust wolffe-lang/wolf || true
           test -f "$taps/homebrew-wolf/Formula/${{ matrix.formula }}.rb"
-          brew info wolffe-lang/wolf/${{ matrix.formula }} | head -n 5
+          # Unpiped on purpose. `brew info | head` closes the pipe on
+          # Homebrew mid-write, ruby raises EPIPE, and `pipefail` makes
+          # that the step's exit code — a green tap reported as a red
+          # one. Measured on this workflow's own first run.
+          brew info wolffe-lang/wolf/${{ matrix.formula }}
 
       - name: ruby -c
         run: ruby -c "Formula/${{ matrix.formula }}.rb"
