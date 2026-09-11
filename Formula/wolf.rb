@@ -36,6 +36,23 @@ class Wolf < Formula
     libexec.install staged/"wolf", staged/"wolf-cimport-worker", staged/"libwolf_rt.a"
     bin.write_exec_script libexec/"wolf"
 
+    # The man page and the three completion files (#250, s140). `cargo
+    # xtask dist` stages them beside the binary, and it does not hand-keep
+    # them: it RUNS the wolf that just built (`wolf --man`, `wolf
+    # --completions <shell>`) and writes what it prints, so they cannot
+    # drift from the verb table they describe. The dist step above has
+    # already failed the build if any of the four came out empty.
+    #
+    # These go to Homebrew's own directories rather than anywhere the
+    # formula picks, so `fish`, `bash` and `zsh` find them the way they
+    # find every other package's. The bash file is renamed to the command
+    # name because bash-completion looks the file up by it; the fish and
+    # zsh files already carry the names their loaders expect.
+    man1.install staged/"wolf.1"
+    fish_completion.install staged/"wolf.fish"
+    zsh_completion.install staged/"_wolf"
+    bash_completion.install staged/"wolf.bash" => "wolf"
+
     doc.install "README.md"
     # The runtime library carries a linking exception: programs compiled
     # with wolf are yours, under any license you choose.
@@ -65,6 +82,25 @@ class Wolf < Formula
   end
 
   test do
+    # The man page and the completions are INSTALLED, not merely staged
+    # (#250). `brew test` runs against the finished keg, so these paths
+    # are the ones a user's shell reads, and this is the only assertion
+    # that would notice the install block losing one — which is how the
+    # maintainer met the gap, as fish completing `wolf bui<tab>` to
+    # something else.
+    assert_path_exists man1/"wolf.1"
+    man = (man1/"wolf.1").read
+    assert_match(/\.TH/, man)
+    assert_match "wolf", man
+    assert_path_exists fish_completion/"wolf.fish"
+    assert_path_exists zsh_completion/"_wolf"
+    assert_path_exists bash_completion/"wolf"
+
+    # And the fish file is fish, not bytes with the right name. fish is
+    # not a dependency of this formula, so this asserts only where it is
+    # already on the box.
+    system "fish", "-n", fish_completion/"wolf.fish" if which("fish")
+
     # The assertion that separates a package from a tarball with
     # ceremony: the bare version, no `+dev`, and a pin.
     out = shell_output("#{bin}/wolf --version")
