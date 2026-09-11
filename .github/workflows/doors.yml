@@ -1,0 +1,106 @@
+# doors — the tap's install gate (homebrew-wolf#1).
+#
+# doors-fresh.yml asks whether each formula still names the CURRENT
+# release. Nothing asked whether it INSTALLS. A formula whose `tag:` and
+# `revision:` disagree, or whose build breaks at the new tag, was green
+# in this tap until a user ran `brew install` — and the bump commit that
+# broke it is the same commit nobody else runs.
+#
+# So: on every push to trunk and every pull request that touches a
+# formula, build each one from source on a macOS runner and run its
+# `test do` block. The version line is echoed into the log on purpose:
+# D57 says a release build prints the bare version and its pin, and a
+# packaging gate that never reads the stamp is not reading the thing the
+# package exists to deliver.
+#
+# The tap is installed FROM THIS CHECKOUT, not from `brew tap
+# wolffe-lang/wolf`. Tapping the published remote would clone trunk and
+# test that — which is exactly the commit under review's own content
+# being ignored.
+#
+# Budget: `wolf` is a source build of the compiler plus `cargo xtask
+# dist`'s smoke, and `lupin` builds the interpreter. Both are tens of
+# minutes. The three formulae are separate jobs so they run beside each
+# other and a slow one never hides a fast one's red.
+
+name: doors
+
+on:
+  push:
+    branches: [trunk]
+    paths:
+      - 'Formula/**'
+      - '.github/workflows/doors.yml'
+  pull_request:
+    paths:
+      - 'Formula/**'
+      - '.github/workflows/doors.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: doors-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HOMEBREW_NO_ANALYTICS: 1
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_ENV_HINTS: 1
+
+jobs:
+  install:
+    name: ${{ matrix.formula }}
+    runs-on: macos-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        formula: [wolf, lupin, lobo]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: The tap, from this checkout
+        run: |
+          set -euo pipefail
+          taps="$(brew --repository)/Library/Taps/wolffe-lang"
+          rm -rf "$taps/homebrew-wolf"
+          mkdir -p "$taps/homebrew-wolf"
+          # A copy, not a symlink and not `brew tap <url>`: Homebrew wants
+          # a real git working copy in Library/Taps, and the whole point
+          # of this gate is that the formula it installs is the one in
+          # this commit.
+          cp -R "$GITHUB_WORKSPACE/." "$taps/homebrew-wolf/"
+          # Homebrew refuses to load formulae from an untrusted
+          # third-party tap and reports it as "invalid syntax in tap!",
+          # which is not what is wrong (README). `|| true`: the
+          # subcommand is newer than some Homebrew versions, and where it
+          # does not exist there is nothing to trust.
+          brew trust wolffe-lang/wolf || true
+          test -f "$taps/homebrew-wolf/Formula/${{ matrix.formula }}.rb"
+          brew info wolffe-lang/wolf/${{ matrix.formula }} | head -n 5
+
+      - name: ruby -c
+        run: ruby -c "Formula/${{ matrix.formula }}.rb"
+
+      - name: brew install --build-from-source
+        run: brew install --build-from-source wolffe-lang/wolf/${{ matrix.formula }}
+
+      - name: The D57 stamp, in the log
+        run: |
+          set -euo pipefail
+          case "${{ matrix.formula }}" in
+            wolf)  "$(brew --prefix)/bin/wolf" --version ;;
+            lupin) "$(brew --prefix)/bin/lupin" --version ;;
+            # lobo writes -v to STDERR because nginx does; reading stdout
+            # alone gets an empty string from a perfect binary.
+            lobo)  "$(brew --prefix)/bin/lobo" -v 2>&1 ;;
+          esac
+
+      - name: brew test
+        run: brew test --verbose wolffe-lang/wolf/${{ matrix.formula }}
+
+      - name: brew linkage
+        run: brew linkage --test wolffe-lang/wolf/${{ matrix.formula }}
