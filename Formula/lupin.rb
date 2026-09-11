@@ -8,8 +8,8 @@ class Lupin < Formula
   # `0.1.27+dev.unknown`.
   url "https://github.com/wolffe-lang/wolf-interp.git",
       using:    :git,
-      tag:      "v0.1.31",
-      revision: "e9c55b4a388f5ace9a3cc0a4f412ce7d0e474290"
+      tag:      "v0.1.32",
+      revision: "c3dd6077c9a9a41b72497c195a291605a3ec8d86"
   license "GPL-3.0-or-later"
   head "https://github.com/wolffe-lang/wolf-interp.git", branch: "trunk"
 
