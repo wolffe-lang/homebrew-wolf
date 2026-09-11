@@ -11,7 +11,7 @@ class Wolf < Formula
   url "https://github.com/wolffe-lang/wolf-lang.git",
       using:    :git,
       tag:      "v0.2.11",
-      revision: "0000000000000000000000000000000000000000"
+      revision: "c9237c11d081d5649825b5293bcff6d2814a5ad2"
   license "GPL-3.0-or-later"
   head "https://github.com/wolffe-lang/wolf-lang.git", branch: "trunk"
 
