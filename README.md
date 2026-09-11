@@ -66,6 +66,20 @@ wolf test hello.lu
 The per-host ledger is
 [docs/platforms.md](https://github.com/wolffe-lang/wolf-lang/blob/trunk/docs/platforms.md).
 
+## What runs before a bump reaches you
+
+Two workflows, and they answer different questions.
+
+`doors.yml` runs on every push to `trunk` and every pull request that
+touches a formula: it installs each one from source on a macOS runner,
+prints its version line, and runs its `test` block. A formula whose
+`tag:` and `revision:` disagree, or whose build breaks at a new tag,
+goes red here instead of in your terminal.
+
+`doors-fresh.yml` runs daily and asks the other question: whether each
+formula still names the current upstream release. A package does not
+break when a version is cut — it quietly keeps serving the old one.
+
 ## Reporting
 
 Formula problems here; language and compiler problems upstream at
