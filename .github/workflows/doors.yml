@@ -22,6 +22,30 @@
 # dist`'s smoke, and `lupin` builds the interpreter. Both are tens of
 # minutes. The three formulae are separate jobs so they run beside each
 # other and a slow one never hides a fast one's red.
+#
+# LINUX (homebrew-wolf#5, tl02). wolf's native tier serves macOS arm64 AND
+# linux x86-64, and this gate was macOS-only. The half that was genuinely
+# untested is `lobo.rb`'s: it is the one formula with platform-specific
+# CONTENT — an `on_linux do / on_intel do` block carrying its own url and its
+# own sha256, which no job in this repository had ever fetched. So `lobo` now
+# runs on `ubuntu-latest` too (Homebrew on Linux, preinstalled on the runner
+# image at /home/linuxbrew/.linuxbrew), and it is cheap: a prebuilt archive,
+# minutes, not an hour of compiling.
+#
+# `wolf` and `lupin` are NOT doubled, and the reason is that they have no
+# linux half in this repository to test. Both are git formulae — one url, one
+# tag, one revision, no `on_linux` block, no second digest — so an
+# ubuntu-latest job would not exercise one byte of formula that macOS does
+# not. What it would exercise is the COMPILER on linux x86-64, which is
+# wolf-lang's and wolf-interp's own CI, on every commit, not a tap concern on
+# every formula bump; and it would add an hour-plus of runner time to every
+# push here. That a Linuxbrew source build of them is nonetheless worth having
+# somewhere, on a schedule rather than a push, is filed as homebrew-wolf#7.
+#
+# The digest leg #5 offered as a minimum is already covered and is not
+# duplicated here: `doors-fresh` reads every sha256 `lobo.rb` declares — both
+# the darwin one and the linux one — against the digests the live release
+# publishes, on a daily schedule (#4).
 
 name: doors
 
@@ -51,16 +75,32 @@ env:
 
 jobs:
   install:
-    name: ${{ matrix.formula }}
-    runs-on: macos-latest
+    name: ${{ matrix.formula }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
-        formula: [wolf, lupin, lobo]
+        # Written out rather than `os: [...] x formula: [...]`, because the
+        # product is not what is wanted: only `lobo` has a linux half (above).
+        include:
+          - { os: macos-latest,  formula: wolf }
+          - { os: macos-latest,  formula: lupin }
+          - { os: macos-latest,  formula: lobo }
+          - { os: ubuntu-latest, formula: lobo }
 
     steps:
       - uses: actions/checkout@v5
+
+      - name: Linuxbrew on PATH
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          # The ubuntu runner image ships Homebrew at this prefix. Adding the
+          # directory is enough — brew computes the rest of its own
+          # environment — and it is a no-op where the image already did it.
+          test -x /home/linuxbrew/.linuxbrew/bin/brew
+          echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
 
       - name: The tap, from this checkout
         run: |
