@@ -1,0 +1,261 @@
+# doors-unattended — the two install gates nobody pushes to.
+#
+# `doors.yml` gates what a PUSH to this repository changes. `doors-fresh`
+# gates whether the formulae and the AUR still NAME the current release.
+# Two things were left with no gate at all, both filed at tl02's close,
+# and both share one shape: what they prove does not change when this
+# repository changes, so a push is the wrong trigger for them and a
+# schedule is the right one.
+#
+# ------------------------------------------------------------------ #6
+#
+# The AUR's five packages have no install gate. `doors-fresh.yml`'s
+# `lobo-aur` job was removed at bce04ee because it copied
+# `ws21/aur/lobo-bin`, which does not exist in this repository in any
+# form (the sources live in a private sprint tree), and because makepkg
+# wanted a signing key. What it was ACTUALLY asserting — makepkg →
+# pacman -U → `lobo -v` → serve → one GET compared against the shipped
+# page — is replaced by nothing. `doors.yml` proves the TAP's three
+# formulae install; the AUR had nothing.
+#
+# #6 offered the maintainer three choices: move `aur/` into this repo,
+# give it its own repo, or leave it uncovered. This job takes a fourth,
+# and the fourth is better than the first two for this particular
+# assertion: it clones the package FROM THE LIVE AUR and installs that.
+#
+#   - It needs no source move and no decision — so it stops the gap
+#     being open while the decision waits.
+#   - It proves what an AUR USER actually gets, which is the claim worth
+#     making. A copy of the sources in this repo proves what this repo
+#     holds, and an AUR user installs neither that copy nor this repo.
+#   - `tools/doors-fresh` already treats the live AUR as one of its two
+#     channels, so reading the AUR from here is the existing grain.
+#
+# It does not foreclose choice 1: if `aur/` ever lands in this
+# repository, this job points at the directory instead of the clone and
+# every other line stays.
+#
+# The cost of the fourth way, stated: this job gates an artifact this
+# repository does not contain, so a red can mean "the maintainer pushed
+# a broken PKGBUILD to the AUR" or "the AUR was down", and neither is a
+# fault in the commit under review. That is precisely why it must not
+# run per-push — a red here is never the pusher's, and a gate that
+# blames the wrong person gets disabled.
+#
+# ------------------------------------------------------------------ #7
+#
+# `wolf` and `lupin` have no linux install gate. tl02 added
+# `ubuntu-latest` for `lobo` only (1ecfb8b) and #7 recorded why: `lobo`
+# is the one formula with platform-specific CONTENT, and doubling the
+# git formulae would exercise no formula byte macOS does not.
+#
+# But "wolf-lang's CI builds wolf on linux" and "`brew install
+# wolffe-lang/wolf/wolf` works on Linuxbrew" are different claims, and
+# the gap between them is real: Linuxbrew's prefix, its `rust` bottle,
+# `std_cargo_args` under /home/linuxbrew/.linuxbrew, and `libexec` +
+# `bin.write_exec_script` behaviour for wolf's `current_exe` lookup of
+# `libwolf_rt.a` are all untested there.
+#
+# An hour-plus per formula is the wrong thing to pay on every formula
+# bump and the right thing to pay on a Monday. Hence weekly.
+#
+# ------------------------------------------------------------ the cadence
+#
+# Weekly, Mondays 05:23 UTC. #7 asked for weekly in as many words ("a
+# slow red is a Monday's problem and not a bump's"), and #6's subject
+# changes only when a release is cut, so a daily install proof of it
+# would re-prove an unchanged package six times for nothing.
+#
+# CAVEAT, the same one tree-sitter-wolf#9 carries: GitHub DISABLES
+# scheduled workflows in a public repository after 60 days with no
+# repository activity, mailing the maintainer once. A tap is a
+# low-traffic repository by nature. If the Monday runs stop appearing,
+# that is why.
+
+name: doors-unattended
+
+on:
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: doors-unattended-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  HOMEBREW_NO_ANALYTICS: 1
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_ENV_HINTS: 1
+
+jobs:
+  # ---------------------------------------------------------------- #6 --
+  aur-install:
+    name: aur/lobo-bin (install + serve)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: archlinux:base-devel
+      options: --privileged
+    steps:
+      - name: Toolchain
+        run: |
+          set -euo pipefail
+          pacman -Syu --noconfirm --needed git curl namcap
+          # makepkg refuses to run as root.
+          useradd -m builder
+
+      # No `actions/checkout`: this job asserts nothing about this
+      # repository's contents. Its subject is the published AUR package,
+      # and cloning that is the whole input.
+      - name: Clone the package from the live AUR
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://aur.archlinux.org/lobo-bin.git /home/builder/lobo-bin
+          chown -R builder:builder /home/builder/lobo-bin
+          echo "--- .SRCINFO ---"
+          cat /home/builder/lobo-bin/.SRCINFO
+
+      - name: makepkg + pacman -U
+        run: |
+          set -euo pipefail
+          # This step is also the digest check: makepkg refuses the source
+          # if sha256sums_x86_64 is not the published archive's.
+          # --nosign, because the runner has no key and the signature is
+          # not what this gate is about (doors-fresh reads the digests
+          # against the release daily).
+          su builder -c 'cd /home/builder/lobo-bin && makepkg -f --noconfirm --nosign'
+          namcap /home/builder/lobo-bin/*.pkg.tar.* || true
+          pacman -U --noconfirm /home/builder/lobo-bin/*.pkg.tar.*
+
+      - name: The provenance assertion
+        run: |
+          set -euo pipefail
+          # `-v` goes to STDERR because nginx's does, and matching nginx's
+          # stream behaviour is the compat charter. A step reading stdout
+          # would compare against "" and fail on a perfect binary.
+          v="$(lobo -v 2>&1)"
+          echo "$v"
+          grep -q 'lobo/[0-9]\+\.[0-9]\+\.[0-9]\+ (built with wolf ' <<<"$v"
+          ! grep -q '+dev' <<<"$v"
+          # The installed binary is the version the PKGBUILD claims. Without
+          # this the job would be green on a package that installed some
+          # OTHER release's archive.
+          pkgver="$(su builder -c 'cd /home/builder/lobo-bin && . ./PKGBUILD && echo $pkgver')"
+          echo "PKGBUILD pkgver=$pkgver"
+          grep -q "lobo/$pkgver " <<<"$v"
+
+      - name: It serves, from a prefix made the way the .install says
+        run: |
+          set -euo pipefail
+          su builder -c '
+            set -eu
+            mkdir -p ~/lobo && cd ~/lobo
+            cp -R /usr/share/lobo/conf /usr/share/lobo/html .
+            mkdir -p logs
+            lobo -t -c conf/lobo.conf
+            # `serve` is a VERB, not a flag. nginx`s -g "daemon off;" is
+            # accepted by lobo`s option parser and does NOT start the
+            # server — a step written from nginx habit gets the banner
+            # and a refused connection.
+            lobo -c conf/lobo.conf serve &
+            for _ in $(seq 1 40); do
+              curl -sf -o /dev/null http://127.0.0.1:8080/ && break
+              sleep 0.5
+            done
+            curl -sf http://127.0.0.1:8080/ > /tmp/served.html
+            curl -sI http://127.0.0.1:8080/ | grep -i "^Server: lobo/"
+            cmp /tmp/served.html html/index.html
+            lobo -s stop -c conf/lobo.conf
+          '
+
+  # ---------------------------------------------------------------- #7 --
+  linuxbrew-install:
+    name: ${{ matrix.formula }} (linuxbrew, source)
+    runs-on: ubuntu-latest
+    # An hour-plus per formula is #7's own estimate; 180 leaves room for
+    # a Linuxbrew round without a timeout being read as a build failure.
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        # `lobo` is absent on purpose: doors.yml already runs it on
+        # ubuntu-latest per push (1ecfb8b, #5), and it is a prebuilt
+        # archive rather than a source build. These two are the pair
+        # that had no linux install gate at any cadence.
+        formula: [wolf, lupin]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Linuxbrew on PATH
+        run: |
+          set -euo pipefail
+          test -x /home/linuxbrew/.linuxbrew/bin/brew
+          echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
+
+      - name: The tap, from this checkout
+        run: |
+          set -euo pipefail
+          taps="$(brew --repository)/Library/Taps/wolffe-lang"
+          rm -rf "$taps/homebrew-wolf"
+          mkdir -p "$taps/homebrew-wolf"
+          cp -R "$GITHUB_WORKSPACE/." "$taps/homebrew-wolf/"
+          brew trust wolffe-lang/wolf || true
+          test -f "$taps/homebrew-wolf/Formula/${{ matrix.formula }}.rb"
+          # Unpiped on purpose — see doors.yml: `brew info | head` closes
+          # the pipe mid-write and pipefail reports a green tap as red.
+          brew info wolffe-lang/wolf/${{ matrix.formula }}
+
+      - name: ruby -c
+        run: ruby -c "Formula/${{ matrix.formula }}.rb"
+
+      - name: brew install --build-from-source
+        run: brew install --build-from-source wolffe-lang/wolf/${{ matrix.formula }}
+
+      - name: The D57 stamp, in the log
+        run: "$(brew --prefix)/bin/${{ matrix.formula }} --version"
+
+      - name: brew test
+        run: brew test --verbose wolffe-lang/wolf/${{ matrix.formula }}
+
+      - name: brew linkage
+        run: brew linkage --test wolffe-lang/wolf/${{ matrix.formula }}
+
+  # ------------------------------------------------------- the red finds you
+  #
+  # Both jobs above run when nobody is watching, by construction. A red
+  # that nobody looks at is not a gate, so it comes and finds a human.
+  # Idempotent: one issue per outage, not one per Monday.
+  notify:
+    needs: [aur-install, linuxbrew-install]
+    if: failure() && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: open or update the red-gate issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          MARKER='unattended install gate is red'
+          BODY=$(printf 'The %s run of doors-unattended failed on %s.\n\n- run: %s\n- trigger: `%s`\n\nThis workflow proves two things no push here can change: that the live `aur/lobo-bin` still installs and serves (#6), and that `wolf` and `lupin` still build and test on Linuxbrew (#7). A red is therefore usually upstream or Linuxbrew, not a commit in this tap.\n' \
+            "$EVENT" "$REPO" "$RUN_URL" "$EVENT")
+          existing=$(gh issue list --repo "$REPO" --state open \
+            --search "in:title \"$MARKER\"" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            echo "commenting on existing #$existing"
+            gh issue comment "$existing" --repo "$REPO" --body "$BODY"
+          else
+            echo "opening a new issue"
+            gh issue create --repo "$REPO" \
+              --title "doors-unattended: $MARKER ($(date -u +%Y-%m-%d))" \
+              --body "$BODY"
+          fi
