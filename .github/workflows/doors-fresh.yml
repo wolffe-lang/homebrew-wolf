@@ -1,104 +1,82 @@
-# doors-fresh (ws21) — the gate that notices a stale package.
+# doors-fresh — the gate that notices a stale package.
 #
-# ws20's doors.yml proves the packages INSTALL. This one proves they are
-# still the CURRENT release, which is the failure mode nothing else can
-# see: a package does not break when a version is cut, it just quietly
-# keeps serving the old one, and no test anywhere goes red.
+# doors.yml proves the packages INSTALL. This one proves they are still the
+# CURRENT release, which is the failure mode nothing else can see: a package
+# does not break when a version is cut, it just quietly keeps serving the old
+# one, and no test anywhere goes red.
 #
 # It belongs beside doors.yml in the repo that owns the packaging —
-# `wolffe-lang/homebrew-wolf`. The AUR cannot host it (an AUR package is
-# a bare git remote with no CI), and no single product repo can see the
-# other two.
+# `wolffe-lang/homebrew-wolf`. The AUR cannot host it (an AUR package is a bare
+# git remote with no CI), and no single product repo can see the other two.
 #
-# The schedule is the point. On a release tag the packager is already
-# looking; a Monday morning red is what catches the release that was cut
-# on a Friday and packaged never.
+# The schedule is the point. On a release tag the packager is already looking;
+# a morning red is what catches the release that was cut on a Friday and
+# packaged never.
+#
+# WHY THIS FILE WAS REWRITTEN (homebrew-wolf#4, tl02). It was authored against
+# the ws21 sprint tree and landed here with that tree's paths, so it had failed
+# EVERY scheduled run since it landed — `ws21/tools/doors-fresh: No such file
+# or directory`, exit 127 (runs 34351157175, 34476207806, 34598344849). A gate
+# that is red every morning for a reason unrelated to what it measures is a
+# gate nobody reads, which is worse than not having one. Two changes:
+#
+#   1. `tools/doors-fresh` — the path the tool actually has in this repo.
+#   2. The `lobo-aur` job is gone. It built an AUR PKGBUILD from
+#      `ws21/aur/lobo-bin`, a directory this repository does not contain in any
+#      form, and its log also carried `ERROR: There is no secret key available
+#      to sign with` — so it was two problems deep, and neither is a path fix.
+#      The digest assertion it advertised ("makepkg refuses the source if
+#      sha256sums_x86_64 is not the published archive's") is ALREADY made by
+#      `doors-fresh` itself, which reads the live `.SRCINFO` for `aur/lobo-bin`
+#      and compares every sha256 in it against the digests the release
+#      publishes — without downloading anything. What it uniquely proved was an
+#      AUR install-and-serve, and that belongs wherever the PKGBUILD sources
+#      live. Filed as homebrew-wolf#6.
+#
+# `release:` is not a trigger here: this repository publishes no releases, so
+# `release: [published]` fired on nothing. The releases that matter are
+# wolf-lang's, wolf-interp's and lobo's, in three other repositories.
 
 name: doors-fresh
 
 on:
   schedule:
+    # 07:31 UTC daily. Note for whoever reads the run list: GitHub queues
+    # scheduled events and delivers them late under load — the three runs cited
+    # above all landed near 12:20 UTC, ~4h50m after the nominal time. That is
+    # the platform, not this workflow; the gate is a daily one either way.
     - cron: '31 7 * * *'
-  release:
-    types: [published]
   workflow_dispatch:
+    inputs:
+      tap_branch:
+        description: >-
+          The tap branch whose Formula/*.rb are read. Leave at `trunk` — that
+          is what is published and what this gate exists to judge. Point it at
+          a throwaway branch only to prove the gate still REDS (#4).
+        type: string
+        default: trunk
+        required: false
 
 permissions:
   contents: read
 
+concurrency:
+  group: doors-fresh-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   fresh:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Every published package against its upstream's latest release
         env:
-          # `gh` is on the runner; this is what keeps the gate off the
-          # 60/hr anonymous GitHub budget.
+          # `gh` is on the runner; this is what keeps the gate off the 60/hr
+          # anonymous GitHub budget.
           GH_TOKEN: ${{ github.token }}
-        run: ws21/tools/doors-fresh
-
-  # The install proof for the door ws21 opens. ws20's doors.yml does this
-  # for wolf-lang/lupin; this is the same shape for lobo-bin, and it is
-  # kept here so the two land as one reviewable pair.
-  lobo-aur:
-    runs-on: ubuntu-latest
-    container:
-      image: archlinux:base-devel
-      options: --privileged
-    steps:
-      - name: Toolchain
-        run: |
-          set -euo pipefail
-          pacman -Syu --noconfirm --needed curl namcap
-          # makepkg refuses to run as root.
-          useradd -m builder
-
-      - uses: actions/checkout@v4
-
-      - name: makepkg + pacman -U
-        run: |
-          set -euo pipefail
-          cp -R ws21/aur/lobo-bin /home/builder/lobo-bin
-          chown -R builder:builder /home/builder/lobo-bin
-          # This step is also the digest check: makepkg refuses the
-          # source if sha256sums_x86_64 is not the published archive's.
-          su builder -c 'cd /home/builder/lobo-bin && makepkg -f --noconfirm'
-          namcap /home/builder/lobo-bin/*.pkg.tar.* || true
-          pacman -U --noconfirm /home/builder/lobo-bin/*.pkg.tar.*
-
-      - name: The provenance assertion
-        run: |
-          set -euo pipefail
-          # `-v` goes to STDERR because nginx's does, and matching nginx's
-          # stream behaviour is the compat charter. A step reading stdout
-          # would compare against "" and fail on a perfect binary.
-          v="$(lobo -v 2>&1)"
-          echo "$v"
-          grep -q 'lobo/[0-9]\+\.[0-9]\+\.[0-9]\+ (built with wolf ' <<<"$v"
-          ! grep -q '+dev' <<<"$v"
-
-      - name: It serves, from a prefix made the way the .install says
-        run: |
-          set -euo pipefail
-          su builder -c '
-            set -eu
-            mkdir -p ~/lobo && cd ~/lobo
-            cp -R /usr/share/lobo/conf /usr/share/lobo/html .
-            mkdir -p logs
-            lobo -t -c conf/lobo.conf
-            # `serve` is a VERB, not a flag. nginx`s -g "daemon off;" is
-            # accepted by lobo`s option parser and does NOT start the
-            # server — a step written from nginx habit gets the banner
-            # and a refused connection.
-            lobo -c conf/lobo.conf serve &
-            for _ in $(seq 1 40); do
-              curl -sf -o /dev/null http://127.0.0.1:8080/ && break
-              sleep 0.5
-            done
-            curl -sf http://127.0.0.1:8080/ > /tmp/served.html
-            curl -sI http://127.0.0.1:8080/ | grep -i "^Server: lobo/"
-            cmp /tmp/served.html html/index.html
-            lobo -s stop -c conf/lobo.conf
-          '
+          # Empty on a schedule, so the script's own `:-trunk` default applies
+          # and a scheduled run can never be pointed anywhere else.
+          DOORS_FRESH_TAP_BRANCH: ${{ inputs.tap_branch }}
+        run: tools/doors-fresh
