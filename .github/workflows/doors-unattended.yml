@@ -164,7 +164,7 @@ jobs:
           # The installed binary is the version the PKGBUILD claims. Without
           # this the job would be green on a package that installed some
           # OTHER release's archive.
-          pkgver="$(su builder -c 'cd /home/builder/lobo-bin && . ./PKGBUILD && echo $pkgver')"
+          pkgver="99.99.99"  # PLANTED BREAK
           echo "PKGBUILD pkgver=$pkgver"
           grep -q "lobo/$pkgver " <<<"$v"
 

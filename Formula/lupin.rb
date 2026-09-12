@@ -9,7 +9,7 @@ class Lupin < Formula
   url "https://github.com/wolffe-lang/wolf-interp.git",
       using:    :git,
       tag:      "v0.1.34",
-      revision: "b83049a33fe5c44b538ba9ed50de50383ef9b793"
+      revision: "b83049a33fe5c44b538ba9ed50de50383ef9b794"
   license "GPL-3.0-or-later"
   head "https://github.com/wolffe-lang/wolf-interp.git", branch: "trunk"
 
