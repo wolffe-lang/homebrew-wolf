@@ -56,15 +56,34 @@
 # `bin.write_exec_script` behaviour for wolf's `current_exe` lookup of
 # `libwolf_rt.a` are all untested there.
 #
-# An hour-plus per formula is the wrong thing to pay on every formula
-# bump and the right thing to pay on a Monday. Hence weekly.
+# #7 estimated "an hour-plus of runner time per formula" and made that
+# the argument for weekly. MEASURED, at run 34682094451 on a cold
+# ubuntu-latest runner: `wolf` 5m22s and `lupin` 2m10s, whole job,
+# including pouring llvm@22 (2.6GB) as a dependency. The estimate was
+# out by roughly an order of magnitude, so the COST argument for weekly
+# does not survive contact — per-push would be affordable.
+#
+# Weekly anyway, on the argument that does survive: an ubuntu job on two
+# GIT formulae exercises no formula byte the macOS job does not (that is
+# doors.yml's own reasoning for not doubling them). What it exercises is
+# LINUXBREW — its prefix, its rust bottle, `std_cargo_args` under
+# /home/linuxbrew/.linuxbrew — and none of that changes when a formula
+# in this repository changes. Running it per-push would re-prove an
+# unchanged environment on every bump and attach its reds to whoever
+# happened to push.
+#
+# That is a cadence the maintainer may now reasonably want to revisit,
+# because the number the original decision rested on was wrong. Filed.
 #
 # ------------------------------------------------------------ the cadence
 #
 # Weekly, Mondays 05:23 UTC. #7 asked for weekly in as many words ("a
 # slow red is a Monday's problem and not a bump's"), and #6's subject
 # changes only when a release is cut, so a daily install proof of it
-# would re-prove an unchanged package six times for nothing.
+# would re-prove an unchanged package six times for nothing. Neither job
+# is slow in the end — the whole workflow was under six minutes wall
+# clock at 34682094451 — so the cadence is about what CHANGES, not about
+# what it costs.
 #
 # CAVEAT, the same one tree-sitter-wolf#9 carries: GitHub DISABLES
 # scheduled workflows in a public repository after 60 days with no
@@ -176,8 +195,11 @@ jobs:
   linuxbrew-install:
     name: ${{ matrix.formula }} (linuxbrew, source)
     runs-on: ubuntu-latest
-    # An hour-plus per formula is #7's own estimate; 180 leaves room for
-    # a Linuxbrew round without a timeout being read as a build failure.
+    # Measured 5m22s (wolf) and 2m10s (lupin) at run 34682094451. 180 is
+    # deliberate headroom, not an estimate: a cold runner, a cache miss on
+    # llvm@22, or an upstream that grows should not have a timeout read as
+    # a build failure. The job is cheap; the headroom costs nothing unless
+    # something is already wrong.
     timeout-minutes: 180
     strategy:
       fail-fast: false
