@@ -94,6 +94,7 @@
 name: doors-unattended
 
 on:
+  push: {branches: [tl05-brew-verify, tl05-brew-verify-break]}
   schedule:
     - cron: '23 5 * * 1'
   workflow_dispatch:
