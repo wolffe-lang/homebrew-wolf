@@ -66,7 +66,14 @@ brew  lupin           wolffe-lang/wolf-interp  git
 brew  lobo            wolffe-lang/lobo         bin
 '
 tap=wolffe-lang/homebrew-wolf
-tap_branch=trunk
+# The branch of the tap whose formulae are read. `trunk` is the answer this
+# gate exists to give — what is PUBLISHED, not what is staged — so it is the
+# default and a scheduled run never reads anything else. The override exists
+# for ONE purpose: proving the gate still reds. A gate nobody has watched fail
+# is a gate nobody knows works, so homebrew-wolf#4 asks for a planted stale
+# version on a throwaway branch, and `DOORS_FRESH_TAP_BRANCH` is how the run
+# is pointed at it (doors-fresh.yml's `tap_branch` dispatch input).
+tap_branch=${DOORS_FRESH_TAP_BRANCH:-trunk}
 
 if [ "$mode" = list ]; then
     printf '%-6s %-16s %-26s %s\n' CHANNEL PACKAGE UPSTREAM KIND
@@ -130,6 +137,11 @@ for repo in $repos; do
         "$(wc -l < "$work/digests.$slug" | tr -d ' ')"
 done
 [ "$red" = 0 ] || { echo "doors-fresh: FAILED before comparing anything" >&2; exit 1; }
+
+# Named in the log on purpose: the brew rows below are read off this branch,
+# and a reader who cannot see which branch cannot tell a real red from a
+# deliberate one.
+printf 'tap      %-26s @ %s\n' "$tap" "$tap_branch"
 
 echo ""
 
