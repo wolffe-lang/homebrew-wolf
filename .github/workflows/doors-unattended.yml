@@ -57,33 +57,49 @@
 # `libwolf_rt.a` are all untested there.
 #
 # #7 estimated "an hour-plus of runner time per formula" and made that
-# the argument for weekly. MEASURED, at run 34682094451 on a cold
-# ubuntu-latest runner: `wolf` 5m22s and `lupin` 2m10s, whole job,
-# including pouring llvm@22 (2.6GB) as a dependency. The estimate was
-# out by roughly an order of magnitude, so the COST argument for weekly
-# does not survive contact — per-push would be affordable.
+# the argument for weekly. It was out by an order of magnitude (#13).
+# MEASURED on cold ubuntu-latest runners, whole job, including pouring
+# llvm@22 (2.6GB) as a dependency, four runs:
 #
-# Weekly anyway, on the argument that does survive: an ubuntu job on two
-# GIT formulae exercises no formula byte the macOS job does not (that is
-# doors.yml's own reasoning for not doubling them). What it exercises is
-# LINUXBREW — its prefix, its rust bottle, `std_cargo_args` under
-# /home/linuxbrew/.linuxbrew — and none of that changes when a formula
-# in this repository changes. Running it per-push would re-prove an
-# unchanged environment on every bump and attach its reds to whoever
-# happened to push.
+#   run           trigger            wolf     lupin   aur/lobo-bin
+#   34682094451   push (tl05)        5m22s    2m10s   28s
+#   34682835424   push (re-proof)    7m31s    3m23s   27s
+#   34794005657   workflow_dispatch  6m26s    2m43s   31s
+#   34834693808   schedule           6m54s    2m55s   29s
 #
-# That is a cadence the maintainer may now reasonably want to revisit,
-# because the number the original decision rested on was wrong. Filed.
+# So wolf is 5-8 min and lupin 2-4 min, a range and not a point: two runs
+# half an hour apart differed by ~40%. Nobody should tune a timeout to one
+# of these numbers.
 #
 # ------------------------------------------------------------ the cadence
 #
-# Weekly, Mondays 05:23 UTC. #7 asked for weekly in as many words ("a
-# slow red is a Monday's problem and not a bump's"), and #6's subject
-# changes only when a release is cut, so a daily install proof of it
-# would re-prove an unchanged package six times for nothing. Neither job
-# is slow in the end — the whole workflow was under six minutes wall
-# clock at 34682094451 — so the cadence is about what CHANGES, not about
-# what it costs.
+# Weekly, Mondays 05:23 UTC, re-stated at tl08 on the numbers above (#13).
+#
+# COST IS NOT THE REASON. The whole workflow is at most ~11 runner-minutes
+# (7m31s + 3m23s + 31s, the worst of each), so weekly is ~9.5 hours a
+# year, and per-push or even daily would be affordable too, at $0 while
+# the repository is public. Any sentence that defends weekly on runner
+# time is defending #7's wrong number.
+#
+# WHAT CHANGES IS THE REASON. An ubuntu job on two GIT formulae exercises
+# no formula byte the macOS job in doors.yml does not (that is doors.yml's
+# own reasoning for not doubling them). What it exercises is LINUXBREW —
+# its prefix, its rust bottle, `std_cargo_args` under
+# /home/linuxbrew/.linuxbrew — plus the live AUR package for #6, and none
+# of that moves when a commit lands here. It moves on Linuxbrew's clock
+# and on upstream's release clock, and weekly catches either within seven
+# days. Per-push would re-prove an unchanged environment on every bump and
+# hang its reds on whoever happened to push; daily would re-prove an
+# unchanged package six times a week for nothing. #7 asked for weekly in
+# as many words ("a slow red is a Monday's problem and not a bump's").
+#
+# The alternative left open, not taken (#13's option 2): add
+# `push: {branches: [trunk], paths: ['Formula/wolf.rb', 'Formula/lupin.rb']}`
+# so a bump is proven on Linux the moment it lands. A bump is the one push
+# where "does this still install on Linuxbrew" is a live question. Its
+# cost is ~11 runner-minutes per bump and a red that can belong to
+# Linuxbrew rather than the bump. That widens what this gate is for, so
+# it is the maintainer's call and not a lane's.
 #
 # CAVEAT (#11): GitHub DISABLES scheduled workflows in a public
 # repository after 60 days with no repository activity — this file's
@@ -205,7 +221,8 @@ jobs:
   linuxbrew-install:
     name: ${{ matrix.formula }} (linuxbrew, source)
     runs-on: ubuntu-latest
-    # Measured 5m22s (wolf) and 2m10s (lupin) at run 34682094451. 180 is
+    # Measured wolf 5m22s-7m31s and lupin 2m10s-3m23s over four runs (see
+    # the header table). 180 is
     # deliberate headroom, not an estimate: a cold runner, a cache miss on
     # llvm@22, or an upstream that grows should not have a timeout read as
     # a build failure. The job is cheap; the headroom costs nothing unless
