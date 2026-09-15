@@ -85,11 +85,13 @@
 # clock at 34682094451 — so the cadence is about what CHANGES, not about
 # what it costs.
 #
-# CAVEAT, the same one tree-sitter-wolf#9 carries: GitHub DISABLES
-# scheduled workflows in a public repository after 60 days with no
-# repository activity, mailing the maintainer once. A tap is a
-# low-traffic repository by nature. If the Monday runs stop appearing,
-# that is why.
+# CAVEAT (#11): GitHub DISABLES scheduled workflows in a public
+# repository after 60 days with no repository activity — this file's
+# Mondays and doors-fresh's mornings together, because the timer is the
+# repository's. A tap is a low-traffic repository by nature, and a
+# disabled schedule shows no red: the runs just stop. The `sleep-alarm`
+# job below is the answer, and why it is an alarm and not a keepalive is
+# written there.
 
 name: doors-unattended
 
@@ -97,6 +99,14 @@ on:
   schedule:
     - cron: '23 5 * * 1'
   workflow_dispatch:
+    inputs:
+      sleep_warn_days:
+        description: >-
+          Days of trunk inactivity at which `sleep-alarm` goes red. Leave
+          at 45. Set 0 only to prove the alarm still REDS (#11).
+        type: string
+        default: '45'
+        required: false
 
 permissions:
   contents: read
@@ -246,6 +256,85 @@ jobs:
 
       - name: brew linkage
         run: brew linkage --test wolffe-lang/wolf/${{ matrix.formula }}
+
+  # ------------------------------------------------------------- #11 --
+  #
+  # The schedules in this repository SLEEP after 60 days without
+  # repository activity, and a sleeping schedule is silent: no run, so no
+  # red, so no `notify`. This job is the red that comes before the silence.
+  #
+  # Why an alarm and not a keepalive. The two keepalive shapes are a bot
+  # commit on a cron, and a scheduled step calling the REST `enable`
+  # endpoint on its own workflow so the timer never fires. The first
+  # writes noise into the tap's history. The second was the DEFAULT mode
+  # of gautamkrishnar/keepalive-workflow v2, and GitHub Staff disabled
+  # that repository for a terms-of-service violation; the reason reported
+  # downstream (ddev/github-action-add-on-test#46) is that it circumvented
+  # the 60-day inactivity policy. Both shapes exist to defeat the timer,
+  # so both put this org's Actions at risk for a weekly install proof. The
+  # timer is GitHub's to run. What this repository owes is that nobody is
+  # SURPRISED by it. (#11's option 3, a release-time dispatch, is real
+  # activity only if it lands a commit, and then it is a bump, which this
+  # tap already gets from every release.)
+  #
+  # So: every Monday run reads the default branch's last commit date and,
+  # at 45 days (at least two Mondays before the 60-day cliff), goes red
+  # and opens one issue naming the date the schedules sleep. A human then
+  # chooses: land something real, or let them sleep and press "Enable
+  # workflow" when wanted. It changes no workflow state and writes nothing
+  # to git.
+  #
+  # "Activity" is not defined by GitHub's docs. The last trunk COMMIT is
+  # the conservative reading: a commit is certainly activity, and a
+  # fast-forwarded commit's committer date predates its push, so the
+  # alarm can only fire early, never late. The run log also prints each
+  # workflow's `state` from the API, so the log says whether the platform
+  # already put one to sleep.
+  sleep-alarm:
+    name: sleep-alarm (60-day schedule rule)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: days until the schedules sleep
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WARN_DAYS: ${{ inputs.sleep_warn_days || '45' }}
+        run: |
+          set -eu
+          case "$WARN_DAYS" in ''|*[!0-9]*) echo "::error::sleep_warn_days must be a whole number, got '$WARN_DAYS'"; exit 2 ;; esac
+          branch=$(gh api "repos/$REPO" --jq .default_branch)
+          last=$(gh api "repos/$REPO/commits?sha=$branch&per_page=1" --jq '.[0].commit.committer.date')
+          test -n "$last"
+          last_s=$(date -u -d "$last" +%s)
+          age=$(( ( $(date -u +%s) - last_s ) / 86400 ))
+          sleeps=$(date -u -d "@$(( last_s + 60 * 86400 ))" +%Y-%m-%d)
+          echo "workflow states (API):"
+          gh api "repos/$REPO/actions/workflows" --jq '.workflows[] | "  \(.path)  \(.state)"'
+          echo "last $branch commit: $last ($age day(s) ago); schedules sleep on or after $sleeps; alarm at $WARN_DAYS day(s)"
+          if [ "$age" -lt "$WARN_DAYS" ]; then
+            echo "quiet: $(( WARN_DAYS - age )) day(s) before the alarm"
+            exit 0
+          fi
+          MARKER='scheduled gates will sleep'
+          BODY=$(printf '%s\n\n- run: %s\n- last `%s` commit: %s (%s days ago)\n- alarm threshold: %s days\n\nGitHub disables this repository'"'"'s scheduled workflows (doors-unattended and doors-fresh) after 60 days without activity, and a disabled schedule never runs, so it never goes red (#11). Either land a real change on `%s`, or let them sleep and re-enable with `gh workflow enable doors-unattended.yml --repo %s` and `gh workflow enable doors-fresh.yml --repo %s` when they are wanted again. No bot keeps them awake, on purpose: see the `sleep-alarm` comment in `.github/workflows/doors-unattended.yml`.\n' \
+            "The tap's scheduled gates sleep on or after $sleeps." "$RUN_URL" "$branch" "$last" "$age" "$WARN_DAYS" "$branch" "$REPO" "$REPO")
+          existing=$(gh issue list --repo "$REPO" --state open \
+            --search "in:title \"$MARKER\"" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body "$BODY"
+          else
+            gh issue create --repo "$REPO" \
+              --title "doors-unattended: $MARKER on or after $sleeps" --body "$BODY"
+          fi
+          echo "::error::$age day(s) since the last $branch commit; the schedules sleep on or after $sleeps"
+          exit 1
 
   # ------------------------------------------------------- the red finds you
   #
