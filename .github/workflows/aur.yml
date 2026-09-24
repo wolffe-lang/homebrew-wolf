@@ -23,6 +23,8 @@
 #   4. `pacman -U`, then the binary's version line: it names `pkgver`
 #      and carries no `+dev` (D57 — an unstamped binary claiming to be a
 #      release is the provenance failure the stamp exists to catch).
+#   5. `wolf run` / `lupin run` on hello.lu, as the builder user: the
+#      installed tree actually works (wolf finds libwolf_rt.a and links).
 #
 # `live-drift` (not on pull_request) compares each `aur/<pkg>/.SRCINFO`
 # with the live AUR's. The two histories must agree; a PR is ahead of the
@@ -139,6 +141,22 @@ jobs:
             *)    grep -q "^${{ matrix.bin }} $pkgver (" <<<"$first" ;;
           esac
           ! grep -q '+dev' <<<"$v"
+
+      - name: It runs a program, as a user of the package would
+        if: matrix.bin != 'lobo'
+        run: |
+          set -euo pipefail
+          # A version line proves the binary starts. `wolf` also has to find
+          # libwolf_rt.a beside itself and link through gcc, which only a
+          # compiled program exercises; lupin has to interpret one.
+          su builder -c '
+            set -eu
+            # its own directory: every .lu in a directory is one module (D32)
+            mkdir -p ~/hello && cd ~/hello && printf "fn main() {\n  print(\"hello, wolf\")\n}\n" > hello.lu
+            out="$(${{ matrix.bin }} run hello.lu)"
+            echo "$out"
+            test "$out" = "hello, wolf"
+          '
 
   live-drift:
     name: aur/ against the live AUR
