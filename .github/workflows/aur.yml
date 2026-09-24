@@ -133,7 +133,9 @@ jobs:
           echo "$v"
           first="$(head -1 <<<"$v")"
           case "${{ matrix.bin }}" in
-            lobo) grep -q "^lobo/$pkgver " <<<"$first" ;;
+            # `lobo version: lobo/0.1.0 (built with wolf ...)` — the
+            # version is mid-line, as doors-unattended's assertion reads it.
+            lobo) grep -q " lobo/$pkgver (built with wolf " <<<"$first" ;;
             *)    grep -q "^${{ matrix.bin }} $pkgver (" <<<"$first" ;;
           esac
           ! grep -q '+dev' <<<"$v"
