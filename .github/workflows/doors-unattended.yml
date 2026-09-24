@@ -31,9 +31,11 @@
 #   - `tools/doors-fresh` already treats the live AUR as one of its two
 #     channels, so reading the AUR from here is the existing grain.
 #
-# It does not foreclose choice 1: if `aur/` ever lands in this
-# repository, this job points at the directory instead of the clone and
-# every other line stays.
+# It did not foreclose choice 1, and choice 1 has landed (#10, tl12):
+# `aur/<pkg>/` holds all five packages and `aur.yml` installs each one
+# from the checkout on every PR that touches it. This job stays on the
+# live clone on purpose — the two answer different questions: `aur.yml`
+# proves what we are about to publish, this proves what an AUR user gets.
 #
 # The cost of the fourth way, stated: this job gates an artifact this
 # repository does not contain, so a red can mean "the maintainer pushed

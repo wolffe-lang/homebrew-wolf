@@ -1,0 +1,166 @@
+# aur — the AUR packages' install gate, from THIS checkout (homebrew-wolf#10,
+# option 1).
+#
+# The five AUR packages' sources live in `aur/<pkg>/` here. A bump is a PR
+# before it is a push to the AUR, and this workflow is what the PR proves:
+# each package is built with `makepkg -s` and installed with `pacman -U`
+# inside `archlinux:base-devel`, from the directory in the commit under
+# review, and the installed binary's version line is read and asserted.
+# The run log of a green run at the PR's head is the install proof the AUR
+# push rests on; the push is made from the same bytes, by a person, because
+# no AUR key lives on GitHub (#10's cost list).
+#
+# What each row asserts, in order:
+#   1. `.SRCINFO` is what `makepkg --printsrcinfo` makes of the PKGBUILD —
+#      the AUR serves `.SRCINFO`, so a stale one publishes a package page
+#      that is not the package.
+#   2. `makepkg -s` succeeds. For a -bin package this is also the x86_64
+#      digest check: makepkg refuses a source whose sha256 differs.
+#   3. For a package with a `source_aarch64`, the aarch64 archive is
+#      fetched and verified too (`--verifysource` under an aarch64
+#      makepkg.conf). Without this the aarch64 sum is never checked by
+#      anyone before an arm user hits it.
+#   4. `pacman -U`, then the binary's version line: it names `pkgver`
+#      and carries no `+dev` (D57 — an unstamped binary claiming to be a
+#      release is the provenance failure the stamp exists to catch).
+#
+# `live-drift` (not on pull_request) compares each `aur/<pkg>/.SRCINFO`
+# with the live AUR's. The two histories must agree; a PR is ahead of the
+# AUR by construction until its push, so the check runs after the fact,
+# on trunk, on dispatch and on a schedule.
+#
+# The weekly live-AUR install of `lobo-bin` in doors-unattended.yml stays:
+# that one proves what an AUR user gets, this one proves what we are
+# about to publish.
+
+name: aur
+
+on:
+  pull_request:
+    paths:
+      - 'aur/**'
+      - '.github/workflows/aur.yml'
+  push:
+    branches: [trunk]
+    paths:
+      - 'aur/**'
+      - '.github/workflows/aur.yml'
+  schedule:
+    - cron: '47 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: aur-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  install:
+    name: aur/${{ matrix.pkg }} (makepkg + pacman -U)
+    runs-on: ubuntu-latest
+    # The source packages compile a compiler (wolf-lang: cargo xtask dist
+    # and its smoke) and an interpreter plus its release test suite
+    # (lupin's check()). Headroom, not an estimate.
+    timeout-minutes: 90
+    container:
+      image: archlinux:base-devel
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { pkg: wolf-lang,     bin: wolf,  vcmd: 'wolf --version' }
+          - { pkg: wolf-lang-bin, bin: wolf,  vcmd: 'wolf --version' }
+          - { pkg: lupin,         bin: lupin, vcmd: 'lupin --version' }
+          - { pkg: lupin-bin,     bin: lupin, vcmd: 'lupin --version' }
+          # lobo's `-v` goes to STDERR, as nginx's does.
+          - { pkg: lobo-bin,      bin: lobo,  vcmd: 'lobo -v' }
+    steps:
+      - name: Toolchain
+        run: |
+          set -euo pipefail
+          pacman -Syu --noconfirm --needed git sudo namcap
+          # makepkg refuses root; -s needs pacman through sudo.
+          useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+
+      - uses: actions/checkout@v5
+
+      - name: The package directory, from this checkout
+        run: |
+          set -euo pipefail
+          cp -R "aur/${{ matrix.pkg }}" /home/builder/pkg
+          chown -R builder:builder /home/builder/pkg
+          cat /home/builder/pkg/.SRCINFO
+
+      - name: .SRCINFO is the PKGBUILD's
+        run: |
+          set -euo pipefail
+          su builder -c 'cd ~/pkg && makepkg --printsrcinfo' > /tmp/srcinfo
+          test -s /tmp/srcinfo
+          diff -u /home/builder/pkg/.SRCINFO /tmp/srcinfo
+
+      - name: makepkg -s
+        run: |
+          set -euo pipefail
+          su builder -c 'cd ~/pkg && makepkg -s -f --noconfirm --nosign'
+          namcap /home/builder/pkg/*.pkg.tar.* || true
+
+      - name: The aarch64 source, verified
+        run: |
+          set -euo pipefail
+          if ! grep -q '^[[:space:]]*source_aarch64 = ' /home/builder/pkg/.SRCINFO; then
+            echo "no source_aarch64 in ${{ matrix.pkg }}; nothing to verify"
+            exit 0
+          fi
+          sed 's/^CARCH=.*/CARCH="aarch64"/' /etc/makepkg.conf > /tmp/makepkg-aarch64.conf
+          grep -q '^CARCH="aarch64"' /tmp/makepkg-aarch64.conf
+          su builder -c 'cd ~/pkg && makepkg --config /tmp/makepkg-aarch64.conf --verifysource -f --ignorearch'
+
+      - name: pacman -U, and the version line
+        run: |
+          set -euo pipefail
+          pacman -U --noconfirm /home/builder/pkg/*.pkg.tar.*
+          pkgver="$(sed -n 's/^[[:space:]]*pkgver = //p' /home/builder/pkg/.SRCINFO)"
+          test -n "$pkgver"
+          v="$(${{ matrix.vcmd }} 2>&1)"
+          echo "PKGBUILD pkgver=$pkgver"
+          echo "$v"
+          first="$(head -1 <<<"$v")"
+          case "${{ matrix.bin }}" in
+            lobo) grep -q "^lobo/$pkgver " <<<"$first" ;;
+            *)    grep -q "^${{ matrix.bin }} $pkgver (" <<<"$first" ;;
+          esac
+          ! grep -q '+dev' <<<"$v"
+
+  live-drift:
+    name: aur/ against the live AUR
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Every aur/<pkg>/.SRCINFO equals the published one
+        run: |
+          set -u
+          red=0
+          for d in aur/*/; do
+            pkg=$(basename "$d")
+            url="https://aur.archlinux.org/cgit/aur.git/plain/.SRCINFO?h=$pkg"
+            if ! curl -fsSL --retry 3 --retry-all-errors --max-time 60 "$url" > "/tmp/live.$pkg" || ! test -s "/tmp/live.$pkg"; then
+              echo "::error::$pkg: the live .SRCINFO could not be fetched"
+              red=1; continue
+            fi
+            if diff -u "/tmp/live.$pkg" "$d.SRCINFO"; then
+              echo "ok   $pkg"
+            else
+              echo "::error::$pkg: aur/$pkg/.SRCINFO differs from the live AUR (diff above: - live, + here)"
+              red=1
+            fi
+          done
+          exit $red
