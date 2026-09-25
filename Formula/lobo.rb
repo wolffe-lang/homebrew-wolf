@@ -9,7 +9,7 @@ class Lobo < Formula
   # EXACT identity — `lib-toolchain.sh` compares `wolf --version` against
   # `wolf 0.2.16 (wolfgang, pin 93a5fe5)` and refuses on any drift. A source
   # formula saying `depends_on "wolf"` would therefore break the day the
-  # wolf formula moves to 0.2.7, and every release after. The published
+  # wolf formula moves past 0.2.16, and every release after. The published
   # archive is built from the pin by lobo's own release workflow and is the
   # byte-identical artifact its learner smoke tests on a clean runner.
   on_macos do
@@ -50,8 +50,8 @@ class Lobo < Formula
         mkdir -p ~/lobo && cd ~/lobo
         cp -R #{opt_pkgshare}/conf #{opt_pkgshare}/html .
         mkdir -p logs
-        lobo                      # serves html/ on 127.0.0.1:8080
-        lobo -s stop
+        lobo -c conf/lobo.conf serve     # serves html/ on 127.0.0.1:8080
+        lobo -s stop -c conf/lobo.conf
 
       `lobo -v` names the toolchain that built it; #{opt_prefix}/share/doc/lobo/BUILD records
       the same line, the source commit and the pins.
