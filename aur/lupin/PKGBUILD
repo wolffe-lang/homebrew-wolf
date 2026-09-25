@@ -39,7 +39,17 @@ build() {
 
 check() {
     cd wolf-interp
-    cargo test --frozen --release || true
+    export RUSTUP_TOOLCHAIN=stable
+    # The whole suite, and it can fail (homebrew-wolf#22). Two tests are
+    # skipped by name, and not for want of a counterparty: both drive
+    # lupin against ITSELF and assert what a DEBUG build of it says
+    # (`UNOPTIMIZED build`, wolf-interp#63), so under --release they are
+    # red by construction. The `|| true` this replaces hid those two and,
+    # because cargo stops at the first failing test binary, every target
+    # after tests/differ_cli.rs too.
+    cargo test --frozen --release -- \
+        --skip a_debug_harness_is_refused_by_name_before_it_can_compare \
+        --skip the_door_is_loud_and_stamps_the_profile_on_the_report
 }
 
 package() {
