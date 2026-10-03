@@ -10,8 +10,8 @@ class Wolf < Formula
   # a tagged git url, so this build tells the truth.
   url "https://github.com/wolffe-lang/wolf-lang.git",
       using:    :git,
-      tag:      "v0.2.20",
-      revision: "cdde128a30999652c9d70189664226b766a206f0"
+      tag:      "v0.2.21",
+      revision: "dfcc2f13e7c73182bdd41fc9bec2802c7da3b024"
   license "GPL-3.0-or-later"
   head "https://github.com/wolffe-lang/wolf-lang.git", branch: "trunk"
 
