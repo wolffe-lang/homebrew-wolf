@@ -10,8 +10,8 @@ class Wolf < Formula
   # a tagged git url, so this build tells the truth.
   url "https://github.com/wolffe-lang/wolf-lang.git",
       using:    :git,
-      tag:      "v0.2.23",
-      revision: "8edac3eeb48632b32f02ef41ea87d484d1423492"
+      tag:      "v0.2.24",
+      revision: "294d626dd596122285d5df954762e3aee3e5db71"
   license "GPL-3.0-or-later"
   head "https://github.com/wolffe-lang/wolf-lang.git", branch: "trunk"
 
@@ -34,6 +34,13 @@ class Wolf < Formula
     # binary" — measured. The exec script replaces the process image, so
     # current_exe is the real libexec path on every host.
     libexec.install staged/"wolf", staged/"wolf-cimport-worker", staged/"libwolf_rt.a"
+    # 0.2.24 (kw12): the freestanding runtime, libwolf_rt_none.a, also lives
+    # beside the binary, where `wolf build --target x86_64-unknown-none`
+    # looks for it. `cargo xtask dist` stages it only when the toolchain has
+    # the x86_64-unknown-none target; Homebrew's rust has none, so dist
+    # skips it loudly and a hosted install is unchanged.
+    rt_none = staged/"libwolf_rt_none.a"
+    libexec.install rt_none if rt_none.exist?
     bin.write_exec_script libexec/"wolf"
 
     # The man page and the three completion files (#250, s140). `cargo
