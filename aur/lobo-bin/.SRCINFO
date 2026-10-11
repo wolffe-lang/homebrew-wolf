@@ -15,6 +15,6 @@ pkgbase = lobo-bin
 	options = !strip
 	options = !debug
 	source_x86_64 = lobo-0.1.3-x86_64.tar.gz::https://github.com/wolffe-lang/lobo/releases/download/v0.1.3/lobo-0.1.3-x86_64-unknown-linux-gnu.tar.gz
-	sha256sums_x86_64 = 0000000000000000000000000000000000000000000000000000000000000000
+	sha256sums_x86_64 = c8a33fa08770ff71df43368c8b9257ecfb6d32a2a1f9a27be611996a67895c3f
 
 pkgname = lobo-bin

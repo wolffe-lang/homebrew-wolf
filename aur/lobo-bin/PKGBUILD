@@ -45,7 +45,7 @@ options=('!strip' '!debug')
 # The archive is built FROM THE PIN by lobo's own release workflow, not
 # from whatever wolf the runner had, so `lobo -v` inside it is honest.
 source_x86_64=("$_pkgname-$pkgver-x86_64.tar.gz::$url/releases/download/v$pkgver/lobo-$pkgver-x86_64-unknown-linux-gnu.tar.gz")
-sha256sums_x86_64=('0000000000000000000000000000000000000000000000000000000000000000')
+sha256sums_x86_64=('c8a33fa08770ff71df43368c8b9257ecfb6d32a2a1f9a27be611996a67895c3f')
 
 package() {
     cd "lobo-$pkgver-x86_64-unknown-linux-gnu"
