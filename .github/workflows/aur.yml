@@ -158,6 +158,37 @@ jobs:
             test "$out" = "hello, wolf"
           '
 
+      # 0.2.27 (s204, ruling #59): the package installs wolf-std as
+      # /usr/lib/wolf-lang/std, beside the real binary, and that directory
+      # is wolf's default std root. So a fresh install, in a container
+      # that has never seen a WOLF_STD, runs `use std.env` with nothing
+      # configured: on the checked machine (its record) and compiled
+      # (`wolf run`). Through 0.2.26 both answered E0301.
+      - name: The installed std is the default root (use std.env, no WOLF_STD)
+        if: matrix.bin == 'wolf'
+        run: |
+          set -euo pipefail
+          rev="$(cat /usr/lib/wolf-lang/std/STD-REV)"
+          echo "std/STD-REV ${rev}"
+          grep -Eq '^[0-9a-f]{40}$' <<<"${rev}"
+          mkdir -p /home/builder/stdenv
+          cat > /home/builder/stdenv/main.lu <<'WOLF'
+          use std.env
+
+          fn main() -> !int {
+              print("{env.has("AUR_NEVER_SET")}")
+              0
+          }
+          WOLF
+          chown -R builder:builder /home/builder/stdenv
+          su builder -c 'cd ~/stdenv && env -u WOLF_STD wolf conform-run main.lu --checked --json' > /tmp/stdenv.json
+          cat /tmp/stdenv.json
+          grep -q '"verdict":"exit(0)"' /tmp/stdenv.json
+          grep -q '"stdout_inline":"false\\n"' /tmp/stdenv.json
+          su builder -c 'cd ~/stdenv && env -u WOLF_STD wolf run main.lu' > /tmp/stdenv.out
+          cat /tmp/stdenv.out
+          test "$(cat /tmp/stdenv.out)" = "false"
+
   live-drift:
     name: aur/ against the live AUR
     if: github.event_name != 'pull_request'
