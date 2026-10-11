@@ -1,0 +1,115 @@
+#!/bin/sh
+# lobo-fill-digests — write a published lobo release's archive digests
+# into Formula/lobo.rb and aur/lobo-bin (PKGBUILD and .SRCINFO).
+#
+#   tools/lobo-fill-digests 0.1.3            fill, from the live release
+#   tools/lobo-fill-digests 0.1.3 --check    change nothing; exit 1 unless
+#                                            the files already carry them
+#
+# WHY A SCRIPT. The tap change for a lobo release is written before the
+# tag exists, and an archive's digest cannot be known before the release
+# workflow packs it at the tag (the archive's BUILD file names the tag).
+# So the staged files carry 64 zeros where each digest goes, and this
+# runs once the release is public. It refuses rather than guesses:
+#
+#   - each digest is read THREE ways and all three must agree and be 64
+#     hex characters: the release's `.sha256` sidecar, GitHub's own asset
+#     digest, and a hash of the archive downloaded anonymously;
+#   - a file is rewritten only where it holds the zeros placeholder or
+#     already holds the right digest (so a second run is a no-op), and
+#     anything else there is a refusal by name;
+#   - the files must already name the version asked for.
+#
+# NEEDS curl, jq and sha256sum or shasum. Downloads go to a temporary
+# folder that is removed on exit.
+set -u
+cd "$(dirname "$0")/.." || exit 2
+
+ver="${1-}"
+mode="${2-fill}"
+case "$ver" in
+    [0-9]*.[0-9]*.[0-9]*) : ;;
+    *) echo "usage: lobo-fill-digests <version> [--check]" >&2; exit 2 ;;
+esac
+case "$mode" in fill | --check) : ;; *) echo "usage: lobo-fill-digests <version> [--check]" >&2; exit 2 ;; esac
+
+repo=wolffe-lang/lobo
+zeros=0000000000000000000000000000000000000000000000000000000000000000
+tmp=$(mktemp -d) || exit 2
+trap 'rm -rf "$tmp"' EXIT
+fail() { echo "lobo-fill-digests: REFUSED — $1" >&2; exit 1; }
+hash_of() { if command -v sha256sum > /dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
+is_hex64() { printf '%s' "$1" | grep -Eq '^[0-9a-f]{64}$'; }
+
+for f in Formula/lobo.rb aur/lobo-bin/PKGBUILD aur/lobo-bin/.SRCINFO; do
+    [ -f "$f" ] || fail "$f is missing"
+done
+grep -q "^  version \"$ver\"$" Formula/lobo.rb || fail "Formula/lobo.rb does not say version \"$ver\""
+grep -q "^pkgver=$ver$" aur/lobo-bin/PKGBUILD || fail "aur/lobo-bin/PKGBUILD does not say pkgver=$ver"
+grep -q "pkgver = $ver$" aur/lobo-bin/.SRCINFO || fail "aur/lobo-bin/.SRCINFO does not say pkgver = $ver"
+
+api="https://api.github.com/repos/$repo/releases/tags/v$ver"
+curl -fsSL -H 'Accept: application/vnd.github+json' "$api" -o "$tmp/release.json" \
+    || fail "no published release v$ver at $repo (a draft is not visible here)"
+[ "$(jq -r .draft "$tmp/release.json")" = "false" ] || fail "release v$ver is a draft"
+
+digest_for() { # digest_for <host triple> — prints the agreed digest
+    a="lobo-$ver-$1.tar.gz"
+    base="https://github.com/$repo/releases/download/v$ver"
+    curl -fsSL --retry 3 -o "$tmp/$a" "$base/$a" || fail "cannot download $a"
+    curl -fsSL --retry 3 -o "$tmp/$a.sha256" "$base/$a.sha256" || fail "cannot download $a.sha256"
+    side=$(cut -d' ' -f1 "$tmp/$a.sha256")
+    mine=$(hash_of "$tmp/$a")
+    api_d=$(jq -r --arg n "$a" '.assets[] | select(.name == $n) | .digest' "$tmp/release.json" | sed 's/^sha256://')
+    is_hex64 "$side" || fail "$a: the sidecar digest is not 64 hex characters: \"$side\""
+    is_hex64 "$mine" || fail "$a: the local hash is not 64 hex characters: \"$mine\""
+    is_hex64 "$api_d" || fail "$a: the release API gives no digest for it: \"$api_d\""
+    [ "$side" = "$mine" ] || fail "$a: sidecar $side, downloaded archive $mine"
+    [ "$api_d" = "$mine" ] || fail "$a: API $api_d, downloaded archive $mine"
+    echo "lobo-fill-digests: $a $(wc -c < "$tmp/$a" | tr -d ' ') bytes sha256 $mine (sidecar, API and download agree)" >&2
+    printf '%s\n' "$mine"
+}
+mac=$(digest_for aarch64-apple-darwin) || exit 1
+lin=$(digest_for x86_64-unknown-linux-gnu) || exit 1
+is_hex64 "$mac" && is_hex64 "$lin" || fail "a digest came back empty"
+[ "$mac" != "$lin" ] || fail "the two hosts' digests are equal"
+
+# what each site holds now: the line after the url naming the host (formula), the one array (PKGBUILD), the one field (.SRCINFO)
+rb_now() { awk -v h="$1" 'index($0, "lobo-'"$ver"'-" h ".tar.gz") { getline; if (match($0, /"[0-9a-f]*"/)) print substr($0, RSTART + 1, RLENGTH - 2); exit }' Formula/lobo.rb; }
+pk_now=$(sed -n "s/^sha256sums_x86_64=('\([0-9a-f]*\)')$/\1/p" aur/lobo-bin/PKGBUILD)
+sr_now=$(sed -n 's/^[[:space:]]*sha256sums_x86_64 = \([0-9a-f]*\)$/\1/p' aur/lobo-bin/.SRCINFO)
+rb_mac=$(rb_now aarch64-apple-darwin)
+rb_lin=$(rb_now x86_64-unknown-linux-gnu)
+check_site() { # check_site <name> <now> <want>
+    [ -n "$2" ] || fail "$1: no digest line found where one belongs"
+    [ "$2" = "$zeros" ] || [ "$2" = "$3" ] || fail "$1 holds $2, which is neither the placeholder nor v$ver's digest $3"
+}
+check_site "Formula/lobo.rb (macOS arm64)" "$rb_mac" "$mac"
+check_site "Formula/lobo.rb (linux x86-64)" "$rb_lin" "$lin"
+check_site "aur/lobo-bin/PKGBUILD" "$pk_now" "$lin"
+check_site "aur/lobo-bin/.SRCINFO" "$sr_now" "$lin"
+
+if [ "$mode" = "--check" ]; then
+    if [ "$rb_mac" = "$mac" ] && [ "$rb_lin" = "$lin" ] && [ "$pk_now" = "$lin" ] && [ "$sr_now" = "$lin" ]; then
+        echo "lobo-fill-digests: ok — the four sites carry v$ver's digests"
+        exit 0
+    fi
+    echo "lobo-fill-digests: NOT FILLED — a site still holds the placeholder (run without --check)" >&2
+    exit 1
+fi
+
+awk -v ver="$ver" -v mac="$mac" -v lin="$lin" '
+    pending != "" { sub(/"[0-9a-f]*"/, "\"" pending "\""); pending = "" }
+    index($0, "lobo-" ver "-aarch64-apple-darwin.tar.gz") { pending = mac }
+    index($0, "lobo-" ver "-x86_64-unknown-linux-gnu.tar.gz") { pending = lin }
+    { print }
+' Formula/lobo.rb > "$tmp/lobo.rb" && cat "$tmp/lobo.rb" > Formula/lobo.rb || fail "could not rewrite Formula/lobo.rb"
+sed "s/^sha256sums_x86_64=('[0-9a-f]*')$/sha256sums_x86_64=('$lin')/" aur/lobo-bin/PKGBUILD > "$tmp/PKGBUILD" && cat "$tmp/PKGBUILD" > aur/lobo-bin/PKGBUILD || fail "could not rewrite PKGBUILD"
+sed "s/^\([[:space:]]*sha256sums_x86_64 = \)[0-9a-f]*$/\1$lin/" aur/lobo-bin/.SRCINFO > "$tmp/SRCINFO" && cat "$tmp/SRCINFO" > aur/lobo-bin/.SRCINFO || fail "could not rewrite .SRCINFO"
+
+# read back: the files must now carry exactly these, and no zeros
+[ "$(rb_now aarch64-apple-darwin)" = "$mac" ] && [ "$(rb_now x86_64-unknown-linux-gnu)" = "$lin" ] || fail "Formula/lobo.rb did not take the digests"
+[ "$(sed -n "s/^sha256sums_x86_64=('\([0-9a-f]*\)')$/\1/p" aur/lobo-bin/PKGBUILD)" = "$lin" ] || fail "PKGBUILD did not take the digest"
+[ "$(sed -n 's/^[[:space:]]*sha256sums_x86_64 = \([0-9a-f]*\)$/\1/p' aur/lobo-bin/.SRCINFO)" = "$lin" ] || fail ".SRCINFO did not take the digest"
+if grep -q "$zeros" Formula/lobo.rb aur/lobo-bin/PKGBUILD aur/lobo-bin/.SRCINFO; then fail "a placeholder is still in the files"; fi
+echo "lobo-fill-digests: filled — Formula/lobo.rb (macOS arm64 $mac, linux x86-64 $lin), aur/lobo-bin/PKGBUILD and .SRCINFO ($lin)"
