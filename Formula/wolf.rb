@@ -10,17 +10,36 @@ class Wolf < Formula
   # a tagged git url, so this build tells the truth.
   url "https://github.com/wolffe-lang/wolf-lang.git",
       using:    :git,
-      tag:      "v0.2.26",
-      revision: "89dc139443da38078df6093568da87bc6d0ee6f9"
+      tag:      "v0.2.27",
+      revision: "0ddda6b7ab9f899aeeea13a66b3427f8422b8a0f"
   license "GPL-3.0-or-later"
   head "https://github.com/wolffe-lang/wolf-lang.git", branch: "trunk"
 
   depends_on "rust" => :build
 
+  # 0.2.27 (s204, ruling #59): the release ships wolf-std as `std/` beside
+  # the binary, at the commit `crates/wolf_driver/STD-PIN` names, and
+  # `cargo xtask dist` stages it. Left alone, dist fetches that commit
+  # itself; handed a checkout through WOLF_DIST_STD_SRC it stages that
+  # one instead and refuses it unless its HEAD is the pin. The resource
+  # is that checkout, so Homebrew downloads and caches the std like any
+  # other source, and a pin that moved without this revision moving
+  # fails the build by name rather than shipping another std.
+  resource "wolf-std" do
+    url "https://github.com/wolffe-lang/wolf-std.git",
+        using:    :git,
+        revision: "87ba16208da8ea642dd463fa89ff3a1ec80ceba1"
+  end
+
   def install
-    # The only build that stamps. It also stages the three files that
-    # must travel together and smoke-tests the staged tree by compiling
-    # and running corpus/hello.lu out of it.
+    std_src = buildpath/"wolf-std-src"
+    resource("wolf-std").stage(std_src)
+    ENV["WOLF_DIST_STD_SRC"] = std_src
+
+    # The only build that stamps. It also stages the files that must
+    # travel together and smoke-tests the staged tree by compiling and
+    # running corpus/hello.lu out of it, and a `use std.env` program
+    # against the staged std/ with no std configured.
     system "cargo", "xtask", "dist"
 
     triple = Utils.safe_popen_read("rustc", "-vV")[/^host: (.+)$/, 1]
@@ -41,6 +60,12 @@ class Wolf < Formula
     # skips it loudly and a hosted install is unchanged.
     rt_none = staged/"libwolf_rt_none.a"
     libexec.install rt_none if rt_none.exist?
+    # 0.2.27 (s204): the standard library, `std/` with its STD-REV and
+    # licenses, beside the real binary. That directory is wolf's default
+    # std root (after --std-root, WOLF_STD and a wolf.pkg `std`
+    # dependency), found from current_exe like the runtime, so it has to
+    # sit in libexec with the binary and not in share.
+    libexec.install staged/"std"
     bin.write_exec_script libexec/"wolf"
 
     # The man page and the three completion files (#250, s140). `cargo
@@ -125,6 +150,31 @@ class Wolf < Formula
     # serve, the driver refuses by name with exit 2 and the checked tier
     # runs the same program; both are a working install, and a silent
     # skip would not be.
+    # 0.2.27 (s204): the installed std is the default root. `use std.env`
+    # resolves with nothing configured, on the checked machine (which
+    # answers on every host) and through `wolf run` where the native tier
+    # is served. Before 0.2.27 both were E0301.
+    assert_path_exists libexec/"std/STD-REV"
+    assert_match(/\A[0-9a-f]{40}\n\z/, (libexec/"std/STD-REV").read)
+    (testpath/"e").mkpath
+    (testpath/"e/main.lu").write <<~WOLF
+      use std.env
+
+      fn main() -> !int {
+          print("{env.has("BREW_TEST_NEVER_SET")}")
+          0
+      }
+    WOLF
+    with_env("WOLF_STD" => nil) do
+      rec = JSON.parse(shell_output("#{bin}/wolf conform-run e/main.lu --checked --json"))
+      assert_equal "exit(0)", rec["verdict"]
+      assert_equal "false\n", rec["stdout_inline"]
+      if quiet_system(bin/"wolf", "build", "e/main.lu", "-o", testpath/"e/env")
+        assert_equal "false", shell_output(testpath/"e/env").chomp
+        assert_equal "false", shell_output("#{bin}/wolf run e/main.lu").chomp
+      end
+    end
+
     if quiet_system(bin/"wolf", "build", "hello.lu", "-o", testpath/"hello")
       assert_equal "hello, wolf", shell_output(testpath/"hello").chomp
     else
