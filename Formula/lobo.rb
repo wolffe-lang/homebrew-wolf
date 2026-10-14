@@ -2,27 +2,27 @@ class Lobo < Formula
   desc "Web server written in wolf: nginx-compatible configs, prefork workers"
   homepage "https://github.com/wolffe-lang/lobo"
   license "GPL-3.0-or-later"
-  version "0.1.3"
+  version "0.1.4"
 
   # A PREBUILT archive, and that is the considered choice, not a shortcut.
   # lobo is written in wolf, and `wolf-toolchain.toml` pins the compiler by
   # EXACT identity — `lib-toolchain.sh` compares `wolf --version` against
-  # `wolf 0.2.27 (wolfgang, pin 0ddda6b)` and refuses on any drift. A source
+  # `wolf 0.2.29 (wolfgang, pin 6ffe7c6)` and refuses on any drift. A source
   # formula saying `depends_on "wolf"` would therefore break the day the
-  # wolf formula moves past 0.2.27, and every release after. The published
+  # wolf formula moves past 0.2.29, and every release after. The published
   # archive is built from the pin by lobo's own release workflow and is the
   # byte-identical artifact its learner smoke tests on a clean runner.
   on_macos do
     on_arm do
-      url "https://github.com/wolffe-lang/lobo/releases/download/v0.1.3/lobo-0.1.3-aarch64-apple-darwin.tar.gz"
-      sha256 "7fc88626e7de6c0a2fc8f1d01c9cae567658bf5770d847e78bf71e960dc7a8fd"
+      url "https://github.com/wolffe-lang/lobo/releases/download/v0.1.4/lobo-0.1.4-aarch64-apple-darwin.tar.gz"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/wolffe-lang/lobo/releases/download/v0.1.3/lobo-0.1.3-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "c8a33fa08770ff71df43368c8b9257ecfb6d32a2a1f9a27be611996a67895c3f"
+      url "https://github.com/wolffe-lang/lobo/releases/download/v0.1.4/lobo-0.1.4-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     end
   end
 
