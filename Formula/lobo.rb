@@ -15,14 +15,14 @@ class Lobo < Formula
   on_macos do
     on_arm do
       url "https://github.com/wolffe-lang/lobo/releases/download/v0.1.5/lobo-0.1.5-aarch64-apple-darwin.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      sha256 "2aa3320da860d0c332c7aac133961a44529cdb3a15697f05ee88f1c851b9191c"
     end
   end
 
   on_linux do
     on_intel do
       url "https://github.com/wolffe-lang/lobo/releases/download/v0.1.5/lobo-0.1.5-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      sha256 "b61466c05f757712fa7c0e7d0f7c81aa9f1323d18203e67b7fdf3b71b1e9d1a5"
     end
   end
 
