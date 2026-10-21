@@ -46,4 +46,18 @@ post_upgrade() {
     lobo -v
 
 EOF
+    # 0.1.5's one upgrade note an operator must act on, said once, on the
+    # upgrade that crosses it ($2 is the version being replaced)
+    if [ "$(vercmp "$2" 0.1.5)" -lt 0 ]; then
+        cat << EOF
+==> From 0.1.5, lobo started as root with no \`user\` line runs its workers
+    as nobody (nginx's default) and its master keeps root: a file only root
+    may read now answers 403. To keep 0.1.4's posture, add \`user root;\`.
+    A running lobo is still the old binary: restart it now (lobo -s stop,
+    then start it). Until you do, a worker its master replaces is started
+    from the new /usr/bin/lobo beside old ones. Details:
+    /usr/share/doc/lobo-bin/CHANGELOG.md, "Upgrading from 0.1.4".
+
+EOF
+    fi
 }
