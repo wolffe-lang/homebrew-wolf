@@ -1,7 +1,7 @@
 # homebrew-wolf
 
 Homebrew formulae for the [wolf](https://github.com/wolffe-lang/wolf-lang)
-language and its reference interpreter.
+language, its reference interpreter, and the lobo web server.
 
 ```sh
 brew trust wolffe-lang/wolf
@@ -18,7 +18,7 @@ Refusing to load formula wolffe-lang/wolf/wolf from untrusted tap wolffe-lang/wo
 Error: Cannot tap wolffe-lang/wolf: invalid syntax in tap!
 ```
 
-There is no syntax error — both formulae pass `ruby -c`. The second
+There is no syntax error — the formulae pass `ruby -c`. The second
 line is Homebrew's generic failure message for a tap it declined to
 read. Trust the tap first and it taps cleanly.
 
@@ -26,6 +26,7 @@ read. Trust the tap first and it taps cleanly.
 |---|---|---|
 | `wolf` | the compiler — a compiled systems language with tiered region memory, no lifetime annotations | [wolf-lang](https://github.com/wolffe-lang/wolf-lang) |
 | `lupin` | the reference interpreter, and the compiler's differential oracle | [wolf-interp](https://github.com/wolffe-lang/wolf-interp) |
+| `lobo` | web server with nginx-compatible configs and prefork workers | [lobo](https://github.com/wolffe-lang/lobo) |
 
 ## Your first program
 
@@ -36,13 +37,13 @@ wolf run hello.lu
 
 ## The version string means something
 
-Both formulae build from a **tagged git source**, not a release tarball,
+The wolf and lupin formulae build from a **tagged git source**, not a release tarball,
 and that is deliberate. `wolf --version` is stamped by the builder: it
 names the version *and the commit it was built from*.
 
 ```
-wolf 0.2.6 (wolfgang, pin 398e5f5)
-paired with lupin 0.1.26 (reference interpreter), pin 982f857
+wolf 0.2.35 (wolfgang, pin cf0c13d)
+paired with lupin 0.1.56 (reference interpreter), pin 294d626
 ```
 
 A build made any other way — a plain `cargo build`, or a build from an
@@ -71,8 +72,10 @@ The per-host ledger is
 Two workflows, and they answer different questions.
 
 `doors.yml` runs on every push to `trunk` and every pull request that
-touches a formula: it installs each one from source on a macOS runner,
-prints its version line, and runs its `test` block. A formula whose
+touches a formula: it installs each one on a macOS runner,
+prints its version line, and runs its `test` block. Wolf and lupin are
+source builds; lobo uses its published archive and is also checked on
+Linux. A formula whose
 `tag:` and `revision:` disagree, or whose build breaks at a new tag,
 goes red here instead of in your terminal.
 
