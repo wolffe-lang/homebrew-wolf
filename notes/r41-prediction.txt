@@ -1,0 +1,18 @@
+r41 doors prediction, before pin edits
+Published wolf 0.2.36 peels to 5adf3d91f75b3545ff8d38e5b6693b0b9f367a05;
+lupin 0.1.58 to 6240efe5570dba1a33ba6269e3ba44bae33dd972.
+All five wolf and six lupin assets were read back and hashed twice;
+GNU x86_64 and macOS arm64 archives print bare tag versions, no +dev.
+All GNU wolf/worker/lupin x86_64 and aarch64 imports cap at GLIBC_2.34.
+Bundled std is 78b9d3cbc41d51db44d18c40b6694403644d1c83.
+
+Predict exact formula tag/revision and std-resource updates; four AUR
+PKGBUILD/.SRCINFO pairs, with both GNU architecture hashes for -bin.
+The fifth wolf asset is runtime-only and is intentionally not added to
+host formulae or the four AUR packages. No build/install recipe change.
+README's version transcript must move. Existing doors and AUR CI install
+checks prove packages; local static pin/syntax checks first see old pins
+red, then new pins green. No host package install or AUR write by lane.
+STOP 3: PR only; no merge. Write check/push helper for the maintainer;
+never execute its push. Source CI must be green at the exact source head
+before the maintainer copies/pushes these bytes to the AUR.
