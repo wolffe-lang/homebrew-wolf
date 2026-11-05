@@ -42,8 +42,8 @@ and that is deliberate. `wolf --version` is stamped by the builder: it
 names the version *and the commit it was built from*.
 
 ```
-wolf 0.2.36 (wolfgang, pin 5adf3d9)
-paired with lupin 0.1.58 (reference interpreter), pin a5378e3
+wolf 0.2.37 (wolfgang, pin e2757a7)
+paired with lupin 0.1.59 (reference interpreter), pin b16353e8ae616ff3a35bd27adc56b727c50df345
 ```
 
 A build made any other way — a plain `cargo build`, or a build from an
