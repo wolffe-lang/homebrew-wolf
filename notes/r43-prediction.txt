@@ -1,0 +1,24 @@
+r43 doors prediction, before pin edits
+Published wolf v0.2.38 (tag object 3b71ed9e) peels to
+95ae0827a8ad4d0bbed9302df7811caaa7009fa1; lupin v0.1.60 (tag object
+72714c1b) to 17bd522382373b361fe035a5cc61f9e136e1caba. The bundled std is
+d4a4d4cab358e1e8c174f0206f9e13ad5cfe6c61.
+All five wolf and six lupin assets are read back fresh, each into its own
+empty directory, and hashed twice against the release metadata. GNU
+x86_64 and macOS arm64 archives print bare tag versions, no +dev, and
+wolf names lupin 0.1.60 at pin 5f1f1c94. Every GNU wolf, C-import worker
+and lupin executable on x86_64 and aarch64 imports at most GLIBC_2.34.
+
+Predict exact formula tag/revision updates for both, wolf's std resource
+to d4a4d4c, and the four AUR PKGBUILD/.SRCINFO pairs (wolf-lang,
+wolf-lang-bin 0.2.38; lupin, lupin-bin 0.1.60) with both GNU architecture
+hashes for each -bin package and pkgrel staying 1. The tap and the AUR
+both carry 0.2.37 / 0.1.59, so all four packages move. The fifth wolf
+asset is runtime-only and stays out of host formulae and packages. No
+build or install recipe changes. README's version transcript moves in its
+own commit, to what the 0.2.38 archive prints. A local exact pin check
+reads the old pins red first, then the new pins green; the existing doors
+and AUR workflows are the install proof.
+STOP 3: PR only, no merge, no AUR write. The maintainer's check/push
+helper requires a green aur run at this exact head, and push requires the
+head merged on trunk.
