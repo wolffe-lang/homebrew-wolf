@@ -1,11 +1,13 @@
-# A probe, on its own branch: doors' `lobo (ubuntu-latest)` row went red
-# with "wolffe-lang/wolf/lobo: Broken pipe" three times at the 0.2.39 doors
-# head and green at trunk, with lobo's formula the same in both. A first
-# probe (each doors commit, --verbose --debug, output to a file) was green
-# everywhere; a second (doors' own steps) was red at trunk too. This one
-# installs at trunk with no flag, --verbose, --debug and both, three times
-# each, so the smallest flag that turns the row green is named. It changes
-# nothing.
+# A probe, on its own branch: doors' `lobo (ubuntu-latest)` row is red at
+# trunk with "wolffe-lang/wolf/lobo: Broken pipe". The third probe showed the
+# FIRST install in a job failing and a retry passing, and its --debug log
+# shows Homebrew running `git credential-osxkeychain get` on Linux just
+# before the error: it asks a macOS keychain helper, which Linux does not
+# have, for a GitHub token, and the write to it breaks. This one installs
+# once per job, as doors does, three jobs each: unchanged (the control), with
+# the job's token given to Homebrew (HOMEBREW_GITHUB_API_TOKEN), and with
+# Homebrew's GitHub API calls turned off (HOMEBREW_NO_GITHUB_API). It
+# changes nothing.
 name: lobo-linux-probe
 
 on:
@@ -22,18 +24,18 @@ env:
 
 jobs:
   probe:
-    name: lobo on Linux at ${{ matrix.tree }}, ${{ matrix.mode }}
+    name: lobo on Linux at trunk, ${{ matrix.mode }} ${{ matrix.n }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        tree: [6df47a65a89d757fe8965ca5c01f0e99d7737f86]
-        mode: [plain, verbose, debug, verbose-debug]
+        mode: [control, token, no-github-api]
+        n: [1, 2, 3]
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ matrix.tree }}
+          ref: 6df47a65a89d757fe8965ca5c01f0e99d7737f86
       - name: Linuxbrew on PATH
         run: echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
       - name: The tap, from this checkout
@@ -46,25 +48,18 @@ jobs:
           cp -R "$GITHUB_WORKSPACE/." "$taps/homebrew-wolf/"
           brew trust wolffe-lang/wolf || true
           brew info wolffe-lang/wolf/lobo
-      - name: brew install --build-from-source, three times
+      - name: brew install --build-from-source, once
         shell: bash
         env:
           MODE: ${{ matrix.mode }}
+          TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
-          worst=0
-          for attempt in 1 2 3; do
-            case "$MODE" in
-              plain) flags=() ;;
-              verbose) flags=(--verbose) ;;
-              debug) flags=(--debug) ;;
-              verbose-debug) flags=(--verbose --debug) ;;
-            esac
-            rc=0
-            brew install --build-from-source "${flags[@]}" wolffe-lang/wolf/lobo > "$RUNNER_TEMP/install-$attempt.log" 2>&1 || rc=$?
-            [ "$rc" -eq 0 ] || tail -40 "$RUNNER_TEMP/install-$attempt.log"
-            echo "PROBE mode=$MODE attempt=$attempt install exit=$rc"
-            [ "$rc" -eq 0 ] || worst=$rc
-            brew uninstall --force lobo > /dev/null 2>&1 || true
-          done
-          exit "$worst"
+          case "$MODE" in
+            token) export HOMEBREW_GITHUB_API_TOKEN=$TOKEN ;;
+            no-github-api) export HOMEBREW_NO_GITHUB_API=1 ;;
+          esac
+          rc=0
+          brew install --build-from-source wolffe-lang/wolf/lobo || rc=$?
+          echo "PROBE mode=$MODE install exit=$rc"
+          exit "$rc"
