@@ -1,0 +1,57 @@
+# A probe, on its own branch: doors' `lobo (ubuntu-latest)` row went red
+# with "wolffe-lang/wolf/lobo: Broken pipe" at this branch's base (the 0.2.39
+# doors) and green at trunk. lobo's formula is the same in both. This runs
+# doors' own lobo steps on Linux, twice per tree, with --verbose --debug,
+# for trunk and for each commit of the doors branch, so the commit (or the
+# flake) that turns the row red is named. It changes nothing.
+name: lobo-linux-probe
+
+on:
+  push:
+    branches: [r44-lobo-linux-probe]
+
+permissions:
+  contents: read
+
+env:
+  HOMEBREW_NO_ANALYTICS: 1
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_ENV_HINTS: 1
+
+jobs:
+  probe:
+    name: lobo on Linux at ${{ matrix.tree }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        tree: [6df47a6, fed3120, 608578d, e1bb8ca, b24626d, bcf9b0c]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: lobo at the tree, twice
+        shell: bash
+        env:
+          TREE: ${{ matrix.tree }}
+        run: |
+          set -uo pipefail
+          echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
+          export PATH=/home/linuxbrew/.linuxbrew/bin:$PATH
+          brew --version
+          git worktree add -q "$RUNNER_TEMP/tree" "$TREE"
+          git -C "$RUNNER_TEMP/tree" log -1 --format='tree %h %s'
+          taps="$(brew --repository)/Library/Taps/wolffe-lang"
+          rm -rf "$taps/homebrew-wolf"; mkdir -p "$taps/homebrew-wolf"
+          cp -R "$RUNNER_TEMP/tree/." "$taps/homebrew-wolf/"
+          brew trust wolffe-lang/wolf || true
+          brew info wolffe-lang/wolf/lobo > "$RUNNER_TEMP/info.log" 2>&1; echo "info exit=$?"
+          worst=0
+          for attempt in 1 2; do
+            brew install --build-from-source --verbose --debug wolffe-lang/wolf/lobo > "$RUNNER_TEMP/install-$attempt.log" 2>&1; rc=$?
+            echo "PROBE tree=$TREE attempt=$attempt install exit=$rc"
+            if [ "$rc" -ne 0 ]; then tail -60 "$RUNNER_TEMP/install-$attempt.log"; worst=$rc; fi
+            brew uninstall --force lobo > /dev/null 2>&1 || true
+          done
+          exit "$worst"
