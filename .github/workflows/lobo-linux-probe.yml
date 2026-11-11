@@ -2,10 +2,10 @@
 # with "wolffe-lang/wolf/lobo: Broken pipe" three times at the 0.2.39 doors
 # head and green at trunk, with lobo's formula the same in both. A first
 # probe (each doors commit, --verbose --debug, output to a file) was green
-# everywhere. This one repeats doors' own steps exactly (the checkout at the
-# tree, depth 1, copied into the tap; the install printing to the log), and
-# the same install with its output in a file, so the mode that turns the row
-# red is named. It changes nothing.
+# everywhere; a second (doors' own steps) was red at trunk too. This one
+# installs at trunk with no flag, --verbose, --debug and both, three times
+# each, so the smallest flag that turns the row green is named. It changes
+# nothing.
 name: lobo-linux-probe
 
 on:
@@ -28,8 +28,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tree: [6df47a65a89d757fe8965ca5c01f0e99d7737f86, bcf9b0c92635b98588aac11d864db28457046152]
-        mode: [log, file]
+        tree: [6df47a65a89d757fe8965ca5c01f0e99d7737f86]
+        mode: [plain, verbose, debug, verbose-debug]
     steps:
       - uses: actions/checkout@v5
         with:
@@ -54,12 +54,15 @@ jobs:
           set -uo pipefail
           worst=0
           for attempt in 1 2 3; do
-            if [ "$MODE" = log ]; then
-              brew install --build-from-source wolffe-lang/wolf/lobo; rc=$?
-            else
-              brew install --build-from-source wolffe-lang/wolf/lobo > "$RUNNER_TEMP/install-$attempt.log" 2>&1; rc=$?
-              [ "$rc" -eq 0 ] || tail -40 "$RUNNER_TEMP/install-$attempt.log"
-            fi
+            case "$MODE" in
+              plain) flags=() ;;
+              verbose) flags=(--verbose) ;;
+              debug) flags=(--debug) ;;
+              verbose-debug) flags=(--verbose --debug) ;;
+            esac
+            rc=0
+            brew install --build-from-source "${flags[@]}" wolffe-lang/wolf/lobo > "$RUNNER_TEMP/install-$attempt.log" 2>&1 || rc=$?
+            [ "$rc" -eq 0 ] || tail -40 "$RUNNER_TEMP/install-$attempt.log"
             echo "PROBE mode=$MODE attempt=$attempt install exit=$rc"
             [ "$rc" -eq 0 ] || worst=$rc
             brew uninstall --force lobo > /dev/null 2>&1 || true
