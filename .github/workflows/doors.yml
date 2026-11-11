@@ -72,6 +72,12 @@ env:
   HOMEBREW_NO_ANALYTICS: 1
   HOMEBREW_NO_AUTO_UPDATE: 1
   HOMEBREW_NO_ENV_HINTS: 1
+  # Homebrew 7.0.11 on the Linux runner asks `git credential-osxkeychain`
+  # (a macOS keychain helper Linux does not have) for a GitHub token when
+  # an install starts; the write to it fails, and the first install in a
+  # job ends "Broken pipe". This gate needs no GitHub API: turned off, the
+  # lookup is never made.
+  HOMEBREW_NO_GITHUB_API: 1
 
 jobs:
   install:
