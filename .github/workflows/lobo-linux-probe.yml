@@ -1,9 +1,11 @@
 # A probe, on its own branch: doors' `lobo (ubuntu-latest)` row went red
-# with "wolffe-lang/wolf/lobo: Broken pipe" at this branch's base (the 0.2.39
-# doors) and green at trunk. lobo's formula is the same in both. This runs
-# doors' own lobo steps on Linux, twice per tree, with --verbose --debug,
-# for trunk and for each commit of the doors branch, so the commit (or the
-# flake) that turns the row red is named. It changes nothing.
+# with "wolffe-lang/wolf/lobo: Broken pipe" three times at the 0.2.39 doors
+# head and green at trunk, with lobo's formula the same in both. A first
+# probe (each doors commit, --verbose --debug, output to a file) was green
+# everywhere. This one repeats doors' own steps exactly (the checkout at the
+# tree, depth 1, copied into the tap; the install printing to the log), and
+# the same install with its output in a file, so the mode that turns the row
+# red is named. It changes nothing.
 name: lobo-linux-probe
 
 on:
@@ -20,38 +22,46 @@ env:
 
 jobs:
   probe:
-    name: lobo on Linux at ${{ matrix.tree }}
+    name: lobo on Linux at ${{ matrix.tree }}, ${{ matrix.mode }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        tree: [6df47a6, fed3120, 608578d, e1bb8ca, b24626d, bcf9b0c]
+        tree: [6df47a65a89d757fe8965ca5c01f0e99d7737f86, bcf9b0c92635b98588aac11d864db28457046152]
+        mode: [log, file]
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 0
-      - name: lobo at the tree, twice
+          ref: ${{ matrix.tree }}
+      - name: Linuxbrew on PATH
+        run: echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
+      - name: The tap, from this checkout
+        run: |
+          set -euo pipefail
+          git log -1 --format='tree %h %s'
+          taps="$(brew --repository)/Library/Taps/wolffe-lang"
+          rm -rf "$taps/homebrew-wolf"
+          mkdir -p "$taps/homebrew-wolf"
+          cp -R "$GITHUB_WORKSPACE/." "$taps/homebrew-wolf/"
+          brew trust wolffe-lang/wolf || true
+          brew info wolffe-lang/wolf/lobo
+      - name: brew install --build-from-source, three times
         shell: bash
         env:
-          TREE: ${{ matrix.tree }}
+          MODE: ${{ matrix.mode }}
         run: |
           set -uo pipefail
-          echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
-          export PATH=/home/linuxbrew/.linuxbrew/bin:$PATH
-          brew --version
-          git worktree add -q "$RUNNER_TEMP/tree" "$TREE"
-          git -C "$RUNNER_TEMP/tree" log -1 --format='tree %h %s'
-          taps="$(brew --repository)/Library/Taps/wolffe-lang"
-          rm -rf "$taps/homebrew-wolf"; mkdir -p "$taps/homebrew-wolf"
-          cp -R "$RUNNER_TEMP/tree/." "$taps/homebrew-wolf/"
-          brew trust wolffe-lang/wolf || true
-          brew info wolffe-lang/wolf/lobo > "$RUNNER_TEMP/info.log" 2>&1; echo "info exit=$?"
           worst=0
-          for attempt in 1 2; do
-            brew install --build-from-source --verbose --debug wolffe-lang/wolf/lobo > "$RUNNER_TEMP/install-$attempt.log" 2>&1; rc=$?
-            echo "PROBE tree=$TREE attempt=$attempt install exit=$rc"
-            if [ "$rc" -ne 0 ]; then tail -60 "$RUNNER_TEMP/install-$attempt.log"; worst=$rc; fi
+          for attempt in 1 2 3; do
+            if [ "$MODE" = log ]; then
+              brew install --build-from-source wolffe-lang/wolf/lobo; rc=$?
+            else
+              brew install --build-from-source wolffe-lang/wolf/lobo > "$RUNNER_TEMP/install-$attempt.log" 2>&1; rc=$?
+              [ "$rc" -eq 0 ] || tail -40 "$RUNNER_TEMP/install-$attempt.log"
+            fi
+            echo "PROBE mode=$MODE attempt=$attempt install exit=$rc"
+            [ "$rc" -eq 0 ] || worst=$rc
             brew uninstall --force lobo > /dev/null 2>&1 || true
           done
           exit "$worst"
