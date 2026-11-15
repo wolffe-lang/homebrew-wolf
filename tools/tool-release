@@ -69,7 +69,7 @@ def load(root, config, check_gate=True):
     if not c['binaries'] or not isinstance(c['binaries'], dict):
         fail('binaries must be an output-name to build-path map')
     for name, path in c['binaries'].items():
-        if not re.fullmatch(r'[A-Za-z0-9_.+-]+', name):
+        if name != '[' and not re.fullmatch(r'[A-Za-z0-9_.+-]+', name):
             fail(f'invalid binary name: {name}')
         child(root, path)
     for key in ('manifest', 'gate_workflow', 'provenance_source'):

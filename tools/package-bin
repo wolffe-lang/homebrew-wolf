@@ -70,7 +70,7 @@ def generate(product, version, digests):
     values['DESC'] = config['description']
     values['LICENSE'] = config['license']
     binaries = config['binaries']
-    if not binaries or not all(re.fullmatch(r'[A-Za-z0-9_.+-]+', b) for b in binaries):
+    if not binaries or not all(b == '[' or re.fullmatch(r'[A-Za-z0-9_.+-]+', b) for b in binaries):
         fail('invalid installed binary name')
     values['BREW_BINARIES'] = ', '.join(json.dumps(b) for b in binaries)
     values['AUR_BINARIES'] = '\n'.join(f'    install -Dm755 {b} "$pkgdir/usr/bin/{b}"' for b in binaries)
