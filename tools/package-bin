@@ -52,7 +52,8 @@ def verified_digests(name, version, folder):
 
 def render(template, values):
     for key, value in values.items():
-        template = template.replace('@@' + key + '@@', value)
+        if isinstance(value, (str, int, float, bool)):
+            template = template.replace('@@' + key + '@@', str(value))
     if re.search(r'@@[A-Z_]+@@', template):
         fail('unfilled template variable')
     return template
