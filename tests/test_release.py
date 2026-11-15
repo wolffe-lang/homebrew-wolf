@@ -111,6 +111,19 @@ class ReleaseTests(unittest.TestCase):
             out.write('cp target/bin/example target/bin/[\n')
         self.call('build', '--tag', 'v0.1.0', '--host', 'x86_64-unknown-linux-gnu', '--test-host')
 
+    def test_family_operand_only_command_is_explicitly_unavailable(self):
+        self.config['binaries']['test'] = 'target/bin/test'
+        self.config['version_exemptions'] = {'test': 'operand-only command; family version checked by example'}
+        self.save()
+        with (self.root / 'build.sh').open('a') as out:
+            out.write('printf "#!/bin/sh\\nexit 0\\n" > target/bin/test\nchmod +x target/bin/test\n')
+        output = self.call('build', '--tag', 'v0.1.0', '--host', 'x86_64-unknown-linux-gnu', '--test-host')
+        self.assertIn('UNAVAILABLE release-version-option test reason=', output)
+        self.assertIn('observed-cli=0.1.0 binaries=1', output)
+        self.config['version_exemptions']['example'] = 'cannot exempt the whole product'
+        self.save()
+        self.call('validate', '--tag', 'v0.1.0', ok=False)
+
     def test_bad_compiler_identity_refused(self):
         (self.root / '.wolf-bin/wolf').write_text('#!/bin/sh\necho wrong\n')
         self.call('build', '--tag', 'v0.1.0', '--host', 'x86_64-unknown-linux-gnu', '--test-host', ok=False)
