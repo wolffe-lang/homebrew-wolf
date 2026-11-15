@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Generate and check a repository's exact release gate without altering normal CI."""
+import argparse
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+PROFILES = ('all', 'full-every-suite', 'every-gate-leaf', 'full')
+VERIFY = '''  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.identity.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: identity
+        name: exact stable tag commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_TYPE" = tag
+          [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$ ]]
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")" = "$GITHUB_SHA"
+          echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+'''
+
+
+def adapter(text, profile):
+    if profile not in PROFILES:
+        raise ValueError('unknown explicit release gate profile: ' + profile)
+    jobs = text.split('\njobs:\n', 1)[1]
+    blocks = dict(re.findall(r'^  ([A-Za-z0-9_-]+):\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)', jobs, re.M | re.S))
+    if 'plan' not in blocks or not ('tier' in blocks or 'determinism' in blocks):
+        raise ValueError('CI needs a plan and a complete final verdict')
+    blocks.pop('nightly-red', None)
+    # Do not propagate cron-only issue-writing into a tag gate.
+    for name, body in blocks.items():
+        if not re.search(r'^    needs:', body, re.M):
+            body = '    needs: verify\n' + body
+        if name == 'plan':
+            body = re.sub(r'^          EVENT: .*$', '          EVENT: workflow_dispatch', body, flags=re.M)
+            if profile == 'all':
+                if '          IN_TIER:' not in body:
+                    raise ValueError('all profile requires the repository tier planner')
+                body = re.sub(r'^          IN_TIER: .*$', '          IN_TIER: all', body, flags=re.M)
+            elif profile == 'full-every-suite':
+                if '          IN_TIER:' not in body or '          IN_ONLY:' not in body:
+                    raise ValueError('full-every-suite requires both planner inputs')
+                body = re.sub(r'^          IN_TIER: .*$', '          IN_TIER: full', body, flags=re.M)
+                body = re.sub(r'^          IN_ONLY: .*$', '          IN_ONLY: all', body, flags=re.M)
+            elif profile == 'every-gate-leaf':
+                if '          IN_JOBS:' not in body:
+                    raise ValueError('every-gate-leaf requires the complete job planner')
+                body = re.sub(r'^          IN_JOBS: .*$', '          IN_JOBS: ""', body, flags=re.M)
+        if profile == 'every-gate-leaf':
+            body = body.replace('run: tools/in-container tools/gate\n', 'run: tools/in-container tools/gate-record\n')
+        blocks[name] = body
+    if profile == 'every-gate-leaf' and not any('run: tools/in-container tools/gate-record\n' in b for b in blocks.values()):
+        raise ValueError('every-gate-leaf must run the leaf recorder')
+    final = 'tier' if 'tier' in blocks else 'determinism'
+    header = '''# Generated from ci.yml by the pinned release-adapter; checked for drift.
+name: release gate
+on:
+  workflow_call:
+    outputs:
+      tested-sha:
+        description: Exact tag commit whose complete release gate succeeded
+        value: ${{ jobs.complete.outputs.tested-sha }}
+permissions:
+  contents: read
+jobs:
+'''
+    complete = '''  complete:
+    needs: [verify, FINAL]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tested-sha: ${{ needs.verify.outputs.sha }}
+    steps:
+      - name: complete release profile
+        run: echo 'PROFILE-complete PROFILE'
+'''.replace('FINAL', final).replace('PROFILE\'', profile + "'")
+    return header + VERIFY + ''.join('  ' + n + ':\n' + b for n, b in blocks.items()) + complete
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--root', type=Path, required=True)
+    p.add_argument('--write', action='store_true')
+    p.add_argument('--check-pin')
+    a = p.parse_args()
+    root = a.root.resolve()
+    c = json.loads((root / '.github/release.json').read_text())
+    if c['gate_workflow'] != '.github/workflows/release-gate.yml':
+        raise ValueError('gate_workflow must name the local adapter')
+    expected = adapter((root / '.github/workflows/ci.yml').read_text(), c['gate_profile'])
+    path = root / c['gate_workflow']
+    if a.write:
+        path.write_text(expected)
+    elif path.read_text() != expected:
+        raise ValueError('release gate drifted from complete CI; regenerate and review it')
+    if a.check_pin:
+        if not re.fullmatch(r'[0-9a-f]{40}', a.check_pin):
+            raise ValueError('infrastructure pin must be a full SHA')
+        for name, workflow in [('release.yml', 'tool-release'), ('release-public-smoke.yml', 'tool-public-smoke')]:
+            text = (root / '.github/workflows' / name).read_text()
+            refs = re.findall(r'uses: wolffe-lang/homebrew-wolf/\.github/workflows/' + workflow + r'\.yml@([^\s]+)', text)
+            inputs = re.findall(r'infrastructure-revision: ([^\s]+)', text)
+            if refs != [a.check_pin] or inputs != [a.check_pin]:
+                raise ValueError(f'{name} must use the same pinned infrastructure SHA')
+        caller = (root / '.github/workflows/release.yml').read_text()
+        if 'uses: ./.github/workflows/release-gate.yml' not in caller or 'needs: gate' not in caller or 'tested-sha: ${{ needs.gate.outputs.tested-sha }}' not in caller:
+            raise ValueError('draft caller is not bound to the local complete gate')
+    print(f'PASS release-adapter {c["name"]} profile={c["gate_profile"]} exact-ci-copy=yes')
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (ValueError, KeyError, OSError, IndexError) as error:
+        print('FAIL release-adapter: ' + str(error), file=sys.stderr)
+        sys.exit(1)
