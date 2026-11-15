@@ -214,6 +214,21 @@ class PackagingTests(unittest.TestCase):
                 if product == 'boreutils':
                     self.assertIn(b'install -Dm755 [ ', result['aur/boreutils-bin/PKGBUILD'])
 
+    def test_bore_packages_install_only_the_dispatcher_on_path(self):
+        generate = runpy.run_path(str(PACKAGE))['generate']
+        result = generate('boreutils', '0.1.0', dict(MAC_SHA256='1' * 64, LINUX_SHA256='2' * 64))
+        formula = result['Formula/boreutils.rb'].decode()
+        recipe = result['aur/boreutils-bin/PKGBUILD'].decode()
+        self.assertIn('libexec/"boreutils/bin"', formula)
+        self.assertIn('(bin/"bore").write', formula)
+        self.assertIn('export PATH=', formula)
+        self.assertIn('install -Dm755 cat "$pkgdir/usr/lib/boreutils/bin/cat"', recipe)
+        self.assertIn('"$pkgdir/usr/bin/bore"', recipe)
+        self.assertNotIn('install -Dm755 cat "$pkgdir/usr/bin/cat"', recipe)
+        for content in result.values():
+            self.assertNotIn(b'conflicts=(\'coreutils\'', content)
+            self.assertNotIn(b'provides=(\'coreutils\'', content)
+
     def test_lobo_byte_for_byte(self):
         p = subprocess.run([sys.executable, '-I', str(PACKAGE), '--product', 'lobo', '--version', '0.1.5',
                             '--offline', '--mac-sha256', '2aa3320da860d0c332c7aac133961a44529cdb3a15697f05ee88f1c851b9191c',
