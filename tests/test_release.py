@@ -172,6 +172,11 @@ class ReleaseTests(unittest.TestCase):
 
 
 class PackagingTests(unittest.TestCase):
+    def test_render_ignores_non_scalar_product_metadata(self):
+        render = runpy.run_path(str(PACKAGE))['render']
+        values = dict(VERSION='0.1.5', binaries=['lobo'], hooks={'formula': 'hooks/lobo/formula.in'}, COUNT=2)
+        self.assertEqual(render('version=@@VERSION@@ count=@@COUNT@@', values), 'version=0.1.5 count=2')
+
     def test_lobo_byte_for_byte(self):
         p = subprocess.run([sys.executable, '-I', str(PACKAGE), '--product', 'lobo', '--version', '0.1.5',
                             '--offline', '--mac-sha256', '2aa3320da860d0c332c7aac133961a44529cdb3a15697f05ee88f1c851b9191c',
