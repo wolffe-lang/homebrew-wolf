@@ -104,12 +104,16 @@ rewritten to accommodate the release adapter. Supported profiles are `all`,
 The config names the package manifest, gate workflow and explicit gate profile,
 build argv, installed binary map, version arguments/pattern and smoke argv.
 The version regex must contain a named `version` group. Optional fields are
-`experimental`, `extra_files` and `provenance_source`. Each smoke command starts
+`experimental`, `extra_files`, `provenance_source` and `version_exemptions`. The
+last field names commands whose compatible operand grammar has no version option;
+each needs an explicit reason, and at least one family version must still be
+observed. Unavailable options are printed and recorded in `BUILD.json`, never
+counted as version measurements. Each smoke command starts
 with an archived executable using `{bin}/NAME`; it runs from an empty working
 directory with a scratch home and `SHELL=/bin/sh`. Python 3.11 or newer is needed.
 
 A stable `vX.Y.Z` tag must resolve to the tested checkout commit. Its version
-must agree with `wolf.pkg`, the observed version of **every** archived executable,
+must agree with `wolf.pkg`, the observed version of every version-capable executable,
 and a nonempty `CHANGELOG.md` section headed `## X.Y.Z`. The tool's own complete
 release gate runs first; profiles are repository-specific, not interchangeable.
 Builds fetch the digest-pinned toolchain, verify its actual identity and pack

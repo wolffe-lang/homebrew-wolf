@@ -35,7 +35,7 @@ HOSTS = ('aarch64-apple-darwin', 'x86_64-unknown-linux-gnu')
 SEMVER = r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)'
 REQUIRED = {'schema', 'name', 'manifest', 'gate_workflow', 'gate_profile', 'build',
             'binaries', 'version_args', 'version_pattern', 'smoke'}
-OPTIONAL = {'provenance_source', 'extra_files', 'experimental'}
+OPTIONAL = {'provenance_source', 'extra_files', 'experimental', 'version_exemptions'}
 
 
 def fail(message, row='release-path'):
@@ -72,6 +72,12 @@ def load(root, config, check_gate=True):
         if name != '[' and not re.fullmatch(r'[A-Za-z0-9_.+-]+', name):
             fail(f'invalid binary name: {name}')
         child(root, path)
+    exemptions = c.get('version_exemptions', {})
+    if not isinstance(exemptions, dict) or len(exemptions) >= len(c['binaries']):
+        fail('version exemptions must leave at least one observed family version')
+    if any(name not in c['binaries'] or not isinstance(reason, str) or not reason.strip() or '\n' in reason
+           for name, reason in exemptions.items()):
+        fail('each version exemption needs an archived name and a one-line reason')
     for key in ('manifest', 'gate_workflow', 'provenance_source'):
         if key in c:
             child(root, c[key])
@@ -127,6 +133,11 @@ def validate(root, c, tag, expect_sha=None):
 def version_check(c, directory, version):
     lines = {}
     for name in c['binaries']:
+        if name in c.get('version_exemptions', {}):
+            if not (directory / name).is_file() or not os.access(directory / name, os.X_OK):
+                fail(f'missing archived executable: {name}')
+            print(f'UNAVAILABLE release-version-option {name} reason={c["version_exemptions"][name]}')
+            continue
         output = command([str(directory / name), *c['version_args']], directory).strip()
         first = output.splitlines()[0] if output else ''
         m = re.fullmatch(c['version_pattern'], first)
@@ -197,7 +208,7 @@ def build(root, c, tag, host, expect_sha, test_host):
         commit = command(['git', 'rev-parse', 'HEAD'], root).strip() if (root / '.git').exists() else 'test-fixture'
         record = dict(schema=1, name=c['name'], version=version, host=host, source_commit=commit,
                       compiler=compiler, toolchain_sha256=hashlib.sha256((root / 'wolf-toolchain.toml').read_bytes()).hexdigest(),
-                      version_lines=lines)
+                      version_lines=lines, version_exemptions=c.get('version_exemptions', {}))
         (directory / 'BUILD.json').write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')
         out = root / 'target/dist'
         out.mkdir(parents=True, exist_ok=True)
@@ -247,8 +258,8 @@ def smoke(root, c, tag, host, artifacts, test_host, expect_sha=None):
         if hashlib.sha256((directory / 'wolf-toolchain.toml').read_bytes()).hexdigest() != record['toolchain_sha256']:
             fail('archive toolchain record mismatch')
         lines = version_check(c, directory, version)
-        if lines != record['version_lines']:
-            fail('observed version differs from the archive BUILD record')
+        if lines != record['version_lines'] or record.get('version_exemptions', {}) != c.get('version_exemptions', {}):
+            fail('observed version or named unavailable option differs from the archive BUILD record')
         home = Path(tmp) / 'home'
         home.mkdir()
         env = dict(os.environ, HOME=str(home), SHELL='/bin/sh')
