@@ -104,6 +104,13 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn('example-0.1.0-x86_64-unknown-linux-gnu/BUILD.json', names)
         self.assertNotIn('example-0.1.0-x86_64-unknown-linux-gnu/.wolf-bin', names)
 
+    def test_bracket_executable_is_a_valid_archive_name(self):
+        self.config['binaries'] = {'[': 'target/bin/['}
+        self.save()
+        with (self.root / 'build.sh').open('a') as out:
+            out.write('cp target/bin/example target/bin/[\n')
+        self.call('build', '--tag', 'v0.1.0', '--host', 'x86_64-unknown-linux-gnu', '--test-host')
+
     def test_bad_compiler_identity_refused(self):
         (self.root / '.wolf-bin/wolf').write_text('#!/bin/sh\necho wrong\n')
         self.call('build', '--tag', 'v0.1.0', '--host', 'x86_64-unknown-linux-gnu', '--test-host', ok=False)
@@ -176,6 +183,16 @@ class PackagingTests(unittest.TestCase):
         render = runpy.run_path(str(PACKAGE))['render']
         values = dict(VERSION='0.1.5', binaries=['lobo'], hooks={'formula': 'hooks/lobo/formula.in'}, COUNT=2)
         self.assertEqual(render('version=@@VERSION@@ count=@@COUNT@@', values), 'version=0.1.5 count=2')
+
+    def test_all_first_tier_recipes_render_including_bracket(self):
+        generate = runpy.run_path(str(PACKAGE))['generate']
+        for product in ('den', 'paxage', 'pelt', 'boreutils'):
+            with self.subTest(product=product):
+                result = generate(product, '0.1.0', dict(MAC_SHA256='1' * 64, LINUX_SHA256='2' * 64))
+                self.assertEqual(len(result), 3)
+                self.assertFalse(any(b'@@' in value for value in result.values()))
+                if product == 'boreutils':
+                    self.assertIn(b'install -Dm755 [ ', result['aur/boreutils-bin/PKGBUILD'])
 
     def test_lobo_byte_for_byte(self):
         p = subprocess.run([sys.executable, '-I', str(PACKAGE), '--product', 'lobo', '--version', '0.1.5',
