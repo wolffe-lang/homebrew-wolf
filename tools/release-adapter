@@ -42,6 +42,10 @@ def adapter(text, profile):
     blocks.pop('nightly-red', None)
     # Do not propagate cron-only issue-writing into a tag gate.
     for name, body in blocks.items():
+        # Exclude development commentary, not gate commands, from generated files.
+        body = re.sub(r'^ +#[^\n]*\n', '', body, flags=re.M)
+        body = re.sub(r'echo "::notice::runner Python is not Unicode[^\n]*',
+                      'echo "::notice::runner Python has a different Unicode version; using the committed table"', body)
         if not re.search(r'^    needs:', body, re.M):
             body = '    needs: verify\n' + body
         if name == 'plan':

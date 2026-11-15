@@ -62,6 +62,11 @@ class AdapterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             adapter(CI.replace('          IN_ONLY:', '          MISSING:'), 'full-every-suite')
 
+    def test_generated_gate_excludes_development_commentary(self):
+        text = adapter(CI.replace('    steps:\n', '    # explanatory comment\n    steps:\n'), 'all')
+        self.assertNotIn('# explanatory comment', text)
+        self.assertIn('run: python3 ci/tiers.py verdict', text)
+
     def test_ci_command_changes_are_visible_in_generated_adapter(self):
         self.assertNotEqual(adapter(CI, 'all'), adapter(CI.replace('tools/gate\n', 'tools/gate --different\n'), 'all'))
 

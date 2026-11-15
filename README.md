@@ -93,8 +93,9 @@ its `infrastructure-revision` input to the same full commit SHA. The caller
 runs its adapter first and passes that adapter's `tested-sha` output.
 
 Generate the adapter with `python3 -I tools/release-adapter --root TOOL --write`.
-It retains the complete normal CI job bodies, removes only the cron-only issue
-job, binds the run to the exact tag and applies the explicitly selected release
+It retains the complete gate commands, omits development commentary, normalizes
+an informational Unicode notice, removes the cron-only issue job, binds the run
+to the exact tag and applies the explicitly selected release
 profile. Run it without `--write` to refuse drift from the current CI; a tool's
 lightweight release-wiring workflow checks that on every PR. Normal CI is not
 rewritten to accommodate the release adapter. Supported profiles are `all`,
