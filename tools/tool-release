@@ -35,7 +35,7 @@ HOSTS = ('aarch64-apple-darwin', 'x86_64-unknown-linux-gnu')
 SEMVER = r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)'
 REQUIRED = {'schema', 'name', 'manifest', 'gate_workflow', 'gate_profile', 'build',
             'binaries', 'version_args', 'version_pattern', 'smoke'}
-OPTIONAL = {'provenance_source', 'extra_files', 'experimental', 'version_exemptions'}
+OPTIONAL = {'provenance_source', 'provenance_function', 'extra_files', 'experimental', 'version_exemptions'}
 
 
 def fail(message, row='release-path'):
@@ -81,6 +81,10 @@ def load(root, config, check_gate=True):
     for key in ('manifest', 'gate_workflow', 'provenance_source'):
         if key in c:
             child(root, c[key])
+    if bool(c.get('provenance_source')) != bool(c.get('provenance_function')):
+        fail('provenance needs both an existing source and function name')
+    if c.get('provenance_function') and not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', c['provenance_function']):
+        fail('invalid provenance function name')
     if not c['gate_workflow'].startswith('.github/workflows/') or not c['gate_profile']:
         fail('a local release gate and explicit profile are required')
     if check_gate and 'workflow_call:' not in child(root, c['gate_workflow']).read_text():
@@ -183,9 +187,12 @@ def build(root, c, tag, host, expect_sha, test_host):
         fail('the actual compiler identity disagrees with wolf-toolchain.toml')
     if c.get('provenance_source'):
         dest = child(root, c['provenance_source'])
-        dest.parent.mkdir(parents=True, exist_ok=True)
+        source = dest.read_text()
         escaped = compiler.replace('\\', '\\\\').replace('"', '\\"').replace('{', '{{').replace('}', '}}')
-        dest.write_text('// Generated from the compiler verified against wolf-toolchain.toml.\npub fn compiler() -> str {\n    "' + escaped + '"\n}\n')
+        pattern = r'(?m)(^(?:pub )?fn ' + re.escape(c['provenance_function']) + r'\(\) -> str \{\n)[ \t]*"(?:\\.|[^"\\])*"\n\}'
+        if len(re.findall(pattern, source)) != 1:
+            fail('provenance function must be one existing literal-returning function')
+        dest.write_text(re.sub(pattern, lambda match: match[1] + '    "' + escaped + '"\n}', source))
     print(command(c['build'], root), end='')
     with tempfile.TemporaryDirectory(prefix='release-stage-', dir=root / 'target') as tmp:
         directory = Path(tmp) / f'{c["name"]}-{version}-{host}'

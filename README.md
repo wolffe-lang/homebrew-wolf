@@ -104,7 +104,8 @@ rewritten to accommodate the release adapter. Supported profiles are `all`,
 The config names the package manifest, gate workflow and explicit gate profile,
 build argv, installed binary map, version arguments/pattern and smoke argv.
 The version regex must contain a named `version` group. Optional fields are
-`experimental`, `extra_files`, `provenance_source` and `version_exemptions`. The
+`experimental`, `extra_files`, the `provenance_source`/`provenance_function` pair,
+and `version_exemptions`. The
 last field names commands whose compatible operand grammar has no version option;
 each needs an explicit reason, and at least one family version must still be
 observed. Unavailable options are printed and recorded in `BUILD.json`, never
@@ -119,7 +120,8 @@ release gate runs first; profiles are repository-specific, not interchangeable.
 Builds fetch the digest-pinned toolchain, verify its actual identity and pack
 reproducible archive headers twice. Archives contain executables, license,
 README, release notes, toolchain pins and `BUILD.json` provenance. Den can request
-a generated compiler-provenance module; ordinary source builds remain honest
+an inline compiler-provenance literal stamped into an existing documented
+function; the rest of the source file is preserved. Ordinary source builds remain honest
 about an unrecorded compiler rather than embedding a stale version.
 
 The workflow uploads exactly two archive/SHA-256 pairs to one draft, refusing
