@@ -192,10 +192,17 @@ class ReleaseTests(unittest.TestCase):
             namespace['api'].assert_not_called()
 
     def test_generated_build_provenance(self):
-        self.config['provenance_source'] = 'src/build_version/build_version.lu'
+        self.config['provenance_source'] = 'src/main.lu'
+        self.config['provenance_function'] = 'compiler_provenance'
+        source = self.root / 'src/main.lu'
+        source.write_text('/// The compiler identity observed at release build time.\nfn compiler_provenance() -> str {\n    "unrecorded"\n}\n\nfn main() {\n    print(compiler_provenance())\n}\n')
         self.save()
         self.call('build', '--tag', 'v0.1.0', '--host', 'x86_64-unknown-linux-gnu', '--test-host')
-        self.assertIn('wolf 0.2.36 (test)', (self.root / self.config['provenance_source']).read_text())
+        self.assertIn('wolf 0.2.36 (test)', source.read_text())
+        self.assertIn('fn main()', source.read_text())
+        self.assertIn('/// The compiler identity', source.read_text())
+        source.write_text('fn main() {}\n')
+        self.call('build', '--tag', 'v0.1.0', '--host', 'x86_64-unknown-linux-gnu', '--test-host', ok=False)
 
 
 class PackagingTests(unittest.TestCase):
