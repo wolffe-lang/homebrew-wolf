@@ -128,6 +128,13 @@ class ReleaseTests(unittest.TestCase):
         (self.root / '.wolf-bin/wolf').write_text('#!/bin/sh\necho wrong\n')
         self.call('build', '--tag', 'v0.1.0', '--host', 'x86_64-unknown-linux-gnu', '--test-host', ok=False)
 
+    def test_build_failure_keeps_compiler_diagnostics_and_exit_code(self):
+        (self.root / 'build.sh').write_text('echo "E9999 compiler diagnostic witness" >&2\nexit 2\n')
+        args = [sys.executable, '-I', str(RELEASE), 'build', '--tag', 'v0.1.0', '--host', 'x86_64-unknown-linux-gnu', '--test-host', '--root', str(self.root), '--config', 'release.json']
+        result = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=self.env)
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn('E9999 compiler diagnostic witness', result.stdout)
+
     def test_cli_mismatch_refused(self):
         (self.root / 'build.sh').write_text((self.root / 'build.sh').read_text().replace('example 0.1.0', 'example 0.9.0'))
         self.assertIn('FAIL release-version', self.call('build', '--tag', 'v0.1.0', '--host', 'x86_64-unknown-linux-gnu', '--test-host', ok=False))
