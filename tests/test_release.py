@@ -10,6 +10,9 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
+import runpy
+import io
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = ROOT / 'tools/tool-release'
@@ -41,7 +44,7 @@ class ReleaseTests(unittest.TestCase):
         wolf.chmod(0o755)
         (self.root / '.github/workflows/release-gate.yml').write_text('name: release gate\non:\n  workflow_call:\n')
         (self.root / 'build.sh').write_text('mkdir -p target/bin\nprintf \'#!/bin/sh\\nprintf "example 0.1.0\\\\n"\\n\' > target/bin/example\nchmod +x target/bin/example\n')
-        self.env = dict(os.environ, SHELL='/bin/sh', HOME=str(self.root / 'home'))
+        self.env = dict(os.environ, SHELL='/bin/sh', HOME=str(self.root / 'home'), GITHUB_ACTIONS='false')
         Path(self.env['HOME']).mkdir()
 
     def tearDown(self):
@@ -127,6 +130,39 @@ class ReleaseTests(unittest.TestCase):
         Path(str(archive) + '.sha256').write_text(f'{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n')
         self.call('smoke', '--tag', 'v0.1.0', '--host', 'x86_64-unknown-linux-gnu', '--artifacts', str(out), '--test-host', ok=False)
         self.assertFalse((self.root / 'escaped').exists())
+
+    def test_stage_is_draft_only_and_public_release_is_untouched(self):
+        module = runpy.run_path(str(RELEASE))
+        stage = module['stage']
+        namespace = stage.__globals__
+        names = module['expected_assets'](self.config, 'v0.1.0')
+        artifacts = self.root / 'assets'
+        artifacts.mkdir()
+        for name in names:
+            (artifacts / name).write_bytes(name.encode())
+        (self.root / 'target').mkdir()
+        (self.root / 'target/release-notes.md').write_text('First preview.\n')
+        writes = []
+
+        def fake_api(repo, suffix, method='GET', data=None):
+            if method != 'GET':
+                writes.append((suffix, method, data))
+                self.assertIs(data['draft'], True)
+                return dict(id=42, draft=True, assets=[])
+            return dict(id=42, draft=True, assets=[dict(name=n) for n in names])
+
+        def fake_upload(req):
+            return io.BytesIO(json.dumps(dict(state='uploaded', digest='sha256:' + hashlib.sha256(req.data).hexdigest())).encode())
+
+        with mock.patch.dict(namespace, validate=lambda *a: '0.1.0', releases=lambda repo: iter([]), api=fake_api, open_url=fake_upload):
+            with mock.patch.dict(os.environ, GH_TOKEN='test-fixture', GITHUB_OUTPUT=''):
+                stage(self.root, self.config, 'v0.1.0', 'example/example', artifacts, 'a' * 40)
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0][1], 'POST')
+        with mock.patch.dict(namespace, validate=lambda *a: '0.1.0', releases=lambda repo: iter([dict(id=42, tag_name='v0.1.0', draft=False)]), api=mock.Mock()):
+            with self.assertRaisesRegex(ValueError, 'already public'):
+                stage(self.root, self.config, 'v0.1.0', 'example/example', artifacts, 'a' * 40)
+            namespace['api'].assert_not_called()
 
     def test_generated_build_provenance(self):
         self.config['provenance_source'] = 'src/build_version/build_version.lu'

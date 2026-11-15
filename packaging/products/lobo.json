@@ -1,0 +1,15 @@
+{
+  "name": "lobo",
+  "description": "Web server written in wolf: nginx-compatible configs, prefork workers",
+  "license": "GPL-3.0-or-later",
+  "binaries": [
+    "lobo"
+  ],
+  "version_command": "lobo -v",
+  "hooks": {
+    "formula": "hooks/lobo/formula.in",
+    "pkgbuild": "hooks/lobo/pkgbuild.in",
+    "srcinfo": "hooks/lobo/srcinfo.in",
+    "install": "hooks/lobo/install.in"
+  }
+}

@@ -1,0 +1,59 @@
+name: tool public download smoke
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+      config:
+        type: string
+        required: true
+      infrastructure-revision:
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  public:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, host: x86_64-unknown-linux-gnu}
+          - {os: macos-15, host: aarch64-apple-darwin}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - name: stable tag and immutable infrastructure ref
+        env:
+          TAG: ${{ inputs.tag }}
+          INFRA_REV: ${{ inputs.infrastructure-revision }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$INFRA_REV" =~ ^[0-9a-f]{40}$ ]]
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          path: tagged-config
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: wolffe-lang/homebrew-wolf
+          ref: ${{ inputs.infrastructure-revision }}
+          path: release-infrastructure
+          persist-credentials: false
+      - name: isolate configuration from the source checkout
+        env:
+          CONFIG: ${{ inputs.config }}
+        run: |
+          mkdir smoke-work
+          cp -- "tagged-config/$CONFIG" smoke-work/release.json
+          rm -rf tagged-config
+      # No GH_TOKEN: API lookup and both public downloads are anonymous.
+      - name: verify the published anonymous download
+        env:
+          TAG: ${{ inputs.tag }}
+          HOST: ${{ matrix.host }}
+        run: python3 -I release-infrastructure/tools/tool-release public-smoke --root smoke-work --config release.json --tag "$TAG" --host "$HOST"

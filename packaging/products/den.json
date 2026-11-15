@@ -1,0 +1,9 @@
+{
+  "name": "den",
+  "description": "Experimental Git-compatible version control in wolf",
+  "license": "GPL-3.0-or-later",
+  "binaries": [
+    "den"
+  ],
+  "version_command": "den --version"
+}

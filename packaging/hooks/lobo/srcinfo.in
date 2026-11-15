@@ -1,0 +1,20 @@
+pkgbase = lobo-bin
+	pkgdesc = A web server written in wolf: nginx-compatible configuration, prefork workers (release archive)
+	pkgver = @@VERSION@@
+	pkgrel = 1
+	url = https://github.com/wolffe-lang/lobo
+	install = lobo-bin.install
+	arch = x86_64
+	license = GPL-3.0-or-later
+	depends = gcc-libs
+	depends = glibc
+	optdepends = curl: to fetch a page from the server you just started
+	optdepends = nginx: lobo is differentially tested against it; the configs are interchangeable
+	provides = lobo=@@VERSION@@
+	conflicts = lobo
+	options = !strip
+	options = !debug
+	source_x86_64 = lobo-@@VERSION@@-x86_64.tar.gz::https://github.com/wolffe-lang/lobo/releases/download/v@@VERSION@@/lobo-@@VERSION@@-x86_64-unknown-linux-gnu.tar.gz
+	sha256sums_x86_64 = @@LINUX_SHA256@@
+
+pkgname = lobo-bin

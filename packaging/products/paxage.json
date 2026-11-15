@@ -1,0 +1,10 @@
+{
+  "name": "paxage",
+  "description": "Experimental file-transport package manager with test-only signing",
+  "license": "GPL-3.0-or-later",
+  "binaries": [
+    "paxage",
+    "pxg"
+  ],
+  "version_command": "paxage --version"
+}

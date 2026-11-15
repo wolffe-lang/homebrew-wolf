@@ -1,0 +1,397 @@
+#!/usr/bin/env python3
+"""Build, check and stage prebuilt tool releases. Publication is deliberately absent."""
+import argparse
+import gzip
+import hashlib
+import io
+import json
+import os
+from pathlib import Path, PurePosixPath
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import tomllib
+import urllib.error
+import urllib.request
+from urllib.parse import urlsplit
+
+
+class SafeRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected and urlsplit(req.full_url).netloc != urlsplit(newurl).netloc:
+            redirected.remove_header('Authorization')
+        return redirected
+
+
+def open_url(request):
+    return urllib.request.build_opener(SafeRedirect()).open(request, timeout=120)
+
+HOSTS = ('aarch64-apple-darwin', 'x86_64-unknown-linux-gnu')
+SEMVER = r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)'
+REQUIRED = {'schema', 'name', 'manifest', 'gate_workflow', 'gate_profile', 'build',
+            'binaries', 'version_args', 'version_pattern', 'smoke'}
+OPTIONAL = {'provenance_source', 'extra_files', 'experimental'}
+
+
+def fail(message, row='release-path'):
+    raise ValueError(f'FAIL {row}: {message}')
+
+
+def child(root, value):
+    p = PurePosixPath(value)
+    if p.is_absolute() or '..' in p.parts or not value:
+        fail(f'path must stay inside its root: {value}')
+    result = root / value
+    if not result.resolve().is_relative_to(root.resolve()):
+        fail(f'path escapes its root: {value}')
+    return result
+
+
+def command(argv, cwd, env=None):
+    return subprocess.run(argv, cwd=cwd, env=env, check=True, text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout
+
+
+def load(root, config, check_gate=True):
+    c = json.loads(child(root, config).read_text())
+    if set(c) - REQUIRED - OPTIONAL or REQUIRED - set(c) or c['schema'] != 1:
+        fail('unknown, missing or unsupported config fields')
+    if not re.fullmatch(r'[a-z][a-z0-9-]*', c['name']):
+        fail('invalid product name')
+    for key in ('build', 'version_args'):
+        if not isinstance(c[key], list) or not c[key] or not all(isinstance(x, str) for x in c[key]):
+            fail(f'{key} must be a nonempty argv array')
+    if not c['binaries'] or not isinstance(c['binaries'], dict):
+        fail('binaries must be an output-name to build-path map')
+    for name, path in c['binaries'].items():
+        if not re.fullmatch(r'[A-Za-z0-9_.+-]+', name):
+            fail(f'invalid binary name: {name}')
+        child(root, path)
+    for key in ('manifest', 'gate_workflow', 'provenance_source'):
+        if key in c:
+            child(root, c[key])
+    if not c['gate_workflow'].startswith('.github/workflows/') or not c['gate_profile']:
+        fail('a local release gate and explicit profile are required')
+    if check_gate and 'workflow_call:' not in child(root, c['gate_workflow']).read_text():
+        fail('the release gate must be callable')
+    rx = re.compile(c['version_pattern'])
+    if 'version' not in rx.groupindex:
+        fail('version_pattern needs a named version group')
+    if not isinstance(c['smoke'], list) or not c['smoke']:
+        fail('at least one product smoke command is required')
+    for argv in c['smoke']:
+        if not isinstance(argv, list) or not argv or not all(isinstance(x, str) for x in argv):
+            fail('smoke commands must be argv arrays')
+        if not argv[0].startswith('{bin}/'):
+            fail('a smoke command must run an archived executable')
+    return c
+
+
+def validate(root, c, tag, expect_sha=None):
+    if not re.fullmatch('v' + SEMVER, tag):
+        fail('expected a stable vX.Y.Z tag', 'release-version')
+    version = tag[1:]
+    # Ignore comments rather than accepting a stale version in commentary.
+    manifest = re.sub(r'//[^\n]*', '', child(root, c['manifest']).read_text())
+    versions = re.findall(r'\bversion\s*:\s*"([^"]+)"', manifest)
+    if versions != [version]:
+        fail(f'{tag} disagrees with {c["manifest"]}: {versions}', 'release-version')
+    if expect_sha:
+        if not re.fullmatch(r'[0-9a-f]{40}', expect_sha):
+            fail('expected commit must be a full SHA')
+        head = command(['git', 'rev-parse', 'HEAD'], root).strip()
+        tagged = command(['git', 'rev-parse', f'refs/tags/{tag}^{{commit}}'], root).strip()
+        if head != expect_sha or tagged != expect_sha:
+            fail('checkout, tag and requested commit must agree', 'release-version')
+    text = (root / 'CHANGELOG.md').read_text()
+    sections = list(re.finditer(r'^##\s+(?:\[)?' + re.escape(version) + r'(?:\])?(?:\s[^\n]*)?$', text, re.M))
+    if len(sections) != 1:
+        fail(f'CHANGELOG must have exactly one {version} section')
+    rest = text[sections[0].end():]
+    notes = re.split(r'^##\s', rest, maxsplit=1, flags=re.M)[0].strip()
+    if not notes or 'unreleased' in sections[0].group().lower():
+        fail('release CHANGELOG section is empty or unreleased')
+    if c.get('experimental') and not re.search(r'\bexperimental\b', notes, re.I):
+        fail('experimental release notes must say experimental')
+    (root / 'target').mkdir(exist_ok=True)
+    (root / 'target/release-notes.md').write_text(notes + '\n')
+    print(f'PASS release-version tag={tag} package={version}')
+    return version
+
+
+def version_check(c, directory, version):
+    lines = {}
+    for name in c['binaries']:
+        output = command([str(directory / name), *c['version_args']], directory).strip()
+        first = output.splitlines()[0] if output else ''
+        m = re.fullmatch(c['version_pattern'], first)
+        if not m or m.group('version') != version:
+            fail(f'{name} --version disagrees with v{version}: {output!r}', 'release-version')
+        lines[name] = first
+    print(f'PASS release-version observed-cli={version} binaries={len(lines)}')
+    return lines
+
+
+def host_check(host, test_host):
+    actual = {('Darwin', 'arm64'): HOSTS[0], ('Linux', 'x86_64'): HOSTS[1]}.get((platform.system(), platform.machine()))
+    if not test_host and host != actual:
+        fail(f'host {actual!r} cannot build or smoke {host}')
+    if test_host and os.environ.get('GITHUB_ACTIONS') == 'true':
+        fail('--test-host is forbidden in Actions')
+
+
+def pack(directory, archive):
+    # Reproducible archive headers, ordering, modes and gzip timestamp.
+    with archive.open('wb') as raw, gzip.GzipFile(filename='', fileobj=raw, mode='wb', mtime=0) as gz:
+        with tarfile.open(fileobj=gz, mode='w', format=tarfile.PAX_FORMAT) as tar:
+            for p in [directory, *sorted(directory.rglob('*'))]:
+                if p.is_symlink() or not (p.is_file() or p.is_dir()):
+                    fail(f'archive source must be a regular file or directory: {p}')
+                info = tar.gettarinfo(str(p), arcname=str(p.relative_to(directory.parent)))
+                info.uid = info.gid = info.mtime = 0
+                info.uname = info.gname = ''
+                info.mode = 0o755 if p.is_dir() or p.stat().st_mode & 0o111 else 0o644
+                if p.is_file():
+                    with p.open('rb') as stream:
+                        tar.addfile(info, stream)
+                else:
+                    tar.addfile(info)
+
+
+def build(root, c, tag, host, expect_sha, test_host):
+    host_check(host, test_host)
+    version = validate(root, c, tag, expect_sha)
+    pin = tomllib.loads((root / 'wolf-toolchain.toml').read_text())
+    compiler = command([str(root / '.wolf-bin/wolf'), '--version'], root).splitlines()[0]
+    if compiler != pin['wolf']['version_line']:
+        fail('the actual compiler identity disagrees with wolf-toolchain.toml')
+    if c.get('provenance_source'):
+        dest = child(root, c['provenance_source'])
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        escaped = compiler.replace('\\', '\\\\').replace('"', '\\"').replace('{', '{{').replace('}', '}}')
+        dest.write_text('// Generated from the compiler verified against wolf-toolchain.toml.\npub fn compiler() -> str {\n    "' + escaped + '"\n}\n')
+    print(command(c['build'], root), end='')
+    with tempfile.TemporaryDirectory(prefix='release-stage-', dir=root / 'target') as tmp:
+        directory = Path(tmp) / f'{c["name"]}-{version}-{host}'
+        directory.mkdir()
+        for name, path in c['binaries'].items():
+            src = child(root, path)
+            if not src.is_file() or not os.access(src, os.X_OK):
+                fail(f'missing executable: {path}')
+            shutil.copy2(src, directory / name)
+        lines = version_check(c, directory, version)
+        files = ['LICENSE', 'README.md', 'CHANGELOG.md', 'wolf-toolchain.toml', *c.get('extra_files', [])]
+        for value in files:
+            src = child(root, value)
+            dest = child(directory, value)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if src.is_dir():
+                shutil.copytree(src, dest)
+            else:
+                shutil.copy2(src, dest)
+        commit = command(['git', 'rev-parse', 'HEAD'], root).strip() if (root / '.git').exists() else 'test-fixture'
+        record = dict(schema=1, name=c['name'], version=version, host=host, source_commit=commit,
+                      compiler=compiler, toolchain_sha256=hashlib.sha256((root / 'wolf-toolchain.toml').read_bytes()).hexdigest(),
+                      version_lines=lines)
+        (directory / 'BUILD.json').write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')
+        out = root / 'target/dist'
+        out.mkdir(parents=True, exist_ok=True)
+        archive = out / f'{directory.name}.tar.gz'
+        pack(directory, archive)
+        second = Path(tmp) / 'second.tar.gz'
+        pack(directory, second)
+        if archive.read_bytes() != second.read_bytes():
+            fail('packing twice changed archive bytes')
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        Path(str(archive) + '.sha256').write_text(f'{digest}  {archive.name}\n')
+        print(f'PASS release-archive {archive.name} sha256={digest}')
+
+
+def verified_unpack(archive, target, top):
+    expected = Path(str(archive) + '.sha256').read_text()
+    actual = hashlib.sha256(archive.read_bytes()).hexdigest()
+    if expected != f'{actual}  {archive.name}\n':
+        fail('archive SHA-256 or sidecar filename mismatch')
+    with tarfile.open(archive) as tar:
+        seen = set()
+        for member in tar.getmembers():
+            p = PurePosixPath(member.name)
+            if p.is_absolute() or '..' in p.parts or not p.parts or p.parts[0] != top:
+                fail('archive member escapes the expected top directory')
+            if member.name in seen or not (member.isdir() or member.isfile()):
+                fail('archive has a duplicate, link or special member')
+            seen.add(member.name)
+        tar.extractall(target, filter='data')
+    return target / top
+
+
+def smoke(root, c, tag, host, artifacts, test_host, expect_sha=None):
+    host_check(host, test_host)
+    if not re.fullmatch('v' + SEMVER, tag):
+        fail('invalid smoke tag', 'release-version')
+    version = tag[1:]
+    top = f'{c["name"]}-{version}-{host}'
+    (root / 'target').mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='release-smoke-', dir=root / 'target') as tmp:
+        directory = verified_unpack(artifacts / f'{top}.tar.gz', Path(tmp), top)
+        record = json.loads((directory / 'BUILD.json').read_text())
+        if record['name'] != c['name'] or record['version'] != version or record['host'] != host:
+            fail('archive BUILD identity mismatch')
+        if expect_sha and record['source_commit'] != expect_sha:
+            fail('archive source commit mismatch')
+        if hashlib.sha256((directory / 'wolf-toolchain.toml').read_bytes()).hexdigest() != record['toolchain_sha256']:
+            fail('archive toolchain record mismatch')
+        lines = version_check(c, directory, version)
+        if lines != record['version_lines']:
+            fail('observed version differs from the archive BUILD record')
+        home = Path(tmp) / 'home'
+        home.mkdir()
+        env = dict(os.environ, HOME=str(home), SHELL='/bin/sh')
+        # The executable must work without a compiler, source tree or project cwd.
+        for argv in c['smoke']:
+            argv = [s.replace('{bin}', str(directory)) for s in argv]
+            print(command(argv, home, env=env), end='')
+        print(f'PASS release-clean-smoke {host}')
+
+
+def api(repo, suffix, method='GET', data=None):
+    if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo):
+        fail('invalid GitHub repository')
+    headers = {'Accept': 'application/vnd.github+json', 'User-Agent': 'tool-release'}
+    if os.environ.get('GH_TOKEN'):
+        headers['Authorization'] = 'Bearer ' + os.environ['GH_TOKEN']
+    if data is not None:
+        headers['Content-Type'] = 'application/json'
+        data = json.dumps(data).encode()
+    req = urllib.request.Request(f'https://api.github.com/repos/{repo}/{suffix}', headers=headers, method=method, data=data)
+    with open_url(req) as response:
+        return None if response.status == 204 else json.load(response)
+
+
+def releases(repo):
+    page = 1
+    while True:
+        rows = api(repo, f'releases?per_page=100&page={page}')
+        yield from rows
+        if len(rows) < 100:
+            return
+        page += 1
+
+
+def expected_assets(c, tag):
+    return sorted(f'{c["name"]}-{tag[1:]}-{host}.tar.gz{suffix}' for host in HOSTS for suffix in ('', '.sha256'))
+
+
+def stage(root, c, tag, repo, artifacts, expect_sha):
+    validate(root, c, tag, expect_sha)
+    wanted = expected_assets(c, tag)
+    actual = sorted(p.name for p in artifacts.iterdir() if p.is_file())
+    if actual != wanted:
+        fail(f'expected exactly these assets: {wanted}; got {actual}')
+    existing = [r for r in releases(repo) if r['tag_name'] == tag]
+    if len(existing) > 1:
+        fail('multiple releases carry the tag')
+    if existing and not existing[0]['draft']:
+        fail('release is already public; never modify it')
+    notes = (root / 'target/release-notes.md').read_text()
+    body = dict(tag_name=tag, target_commitish=expect_sha, name=f'{c["name"]} {tag}',
+                draft=True, prerelease=bool(c.get('experimental')), body=notes)
+    if existing:
+        release = api(repo, f'releases/{existing[0]["id"]}', 'PATCH', body)
+    else:
+        release = api(repo, 'releases', 'POST', body)
+    if not release['draft']:
+        fail('API did not return a draft')
+    release_id = release['id']
+    # Upload by draft id. Re-runs replace only assets on a verified draft.
+    for asset in release.get('assets', []):
+        api(repo, f'releases/assets/{asset["id"]}', 'DELETE')
+    for name in wanted:
+        content = (artifacts / name).read_bytes()
+        headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                   'Content-Type': 'text/plain' if name.endswith('.sha256') else 'application/gzip',
+                   'User-Agent': 'tool-release'}
+        req = urllib.request.Request(f'https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={name}',
+                                     data=content, headers=headers, method='POST')
+        with open_url(req) as response:
+            asset = json.load(response)
+        if asset.get('state') != 'uploaded' or asset.get('digest') != 'sha256:' + hashlib.sha256(content).hexdigest():
+            fail(f'uploaded asset identity disagrees: {name}')
+    result = api(repo, f'releases/{release_id}')
+    if not result['draft'] or sorted(a['name'] for a in result['assets']) != wanted:
+        fail('draft asset set differs from the two complete archive/sidecar pairs')
+    if os.environ.get('GITHUB_OUTPUT'):
+        with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+            out.write(f'release-id={release_id}\n')
+    print(f'PASS release-draft id={release_id} draft=true assets=4')
+
+
+def download(root, c, tag, repo, host, release_id, public):
+    if not re.fullmatch('v' + SEMVER, tag):
+        fail('invalid download tag')
+    release = api(repo, f'releases/tags/{tag}' if public else f'releases/{int(release_id)}')
+    if release['tag_name'] != tag or release['draft'] == public:
+        fail('download release tag or visibility differs')
+    out = root / 'target/download'
+    out.mkdir(parents=True, exist_ok=True)
+    for suffix in ('', '.sha256'):
+        name = f'{c["name"]}-{tag[1:]}-{host}.tar.gz{suffix}'
+        matches = [a for a in release['assets'] if a['name'] == name]
+        if len(matches) != 1:
+            fail(f'missing or duplicate asset: {name}')
+        asset = matches[0]
+        if public:
+            # Never attach a token to this request: it is the public-user path.
+            url = f'https://github.com/{repo}/releases/download/{tag}/{name}'
+            headers = {'User-Agent': 'tool-release'}
+        else:
+            url = f'https://api.github.com/repos/{repo}/releases/assets/{asset["id"]}'
+            headers = {'Accept': 'application/octet-stream', 'User-Agent': 'tool-release',
+                       'Authorization': 'Bearer ' + os.environ['GH_TOKEN']}
+        with open_url(urllib.request.Request(url, headers=headers)) as response:
+            data = response.read()
+        if asset.get('digest') != 'sha256:' + hashlib.sha256(data).hexdigest():
+            fail(f'download/API digest mismatch: {name}')
+        (out / name).write_bytes(data)
+    return out
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('action', choices=['validate', 'build', 'smoke', 'stage', 'draft-smoke', 'public-smoke'])
+    p.add_argument('--root', type=Path, default=Path.cwd())
+    p.add_argument('--config', default='.github/release.json')
+    p.add_argument('--tag', required=True)
+    p.add_argument('--host', choices=HOSTS)
+    p.add_argument('--expect-sha')
+    p.add_argument('--artifacts', type=Path)
+    p.add_argument('--repo', default=os.environ.get('GITHUB_REPOSITORY'))
+    p.add_argument('--release-id')
+    p.add_argument('--test-host', action='store_true', help=argparse.SUPPRESS)
+    a = p.parse_args()
+    root = a.root.resolve()
+    c = load(root, a.config, check_gate=a.action in ('validate', 'build', 'stage'))
+    if a.action == 'validate':
+        validate(root, c, a.tag, a.expect_sha)
+    elif a.action == 'build':
+        build(root, c, a.tag, a.host, a.expect_sha, a.test_host)
+    elif a.action == 'smoke':
+        smoke(root, c, a.tag, a.host, a.artifacts, a.test_host, a.expect_sha)
+    elif a.action == 'stage':
+        stage(root, c, a.tag, a.repo, a.artifacts, a.expect_sha)
+    else:
+        out = download(root, c, a.tag, a.repo, a.host, a.release_id, a.action == 'public-smoke')
+        smoke(root, c, a.tag, a.host, out, a.test_host, a.expect_sha)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (ValueError, OSError, KeyError, subprocess.CalledProcessError, tarfile.TarError) as error:
+        print(error, file=sys.stderr)
+        sys.exit(1)

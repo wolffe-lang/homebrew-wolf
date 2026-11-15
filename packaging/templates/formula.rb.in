@@ -1,0 +1,29 @@
+class @@CLASS@@ < Formula
+  desc "@@DESC@@"
+  homepage "https://github.com/wolffe-lang/@@NAME@@"
+  license "@@LICENSE@@"
+  version "@@VERSION@@"
+
+  # Prebuilt from the exact compiler/runtime pins, not the moving wolf formula.
+  on_macos do
+    on_arm do
+      url "https://github.com/wolffe-lang/@@NAME@@/releases/download/v@@VERSION@@/@@NAME@@-@@VERSION@@-aarch64-apple-darwin.tar.gz"
+      sha256 "@@MAC_SHA256@@"
+    end
+  end
+  on_linux do
+    on_intel do
+      url "https://github.com/wolffe-lang/@@NAME@@/releases/download/v@@VERSION@@/@@NAME@@-@@VERSION@@-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "@@LINUX_SHA256@@"
+    end
+  end
+
+  def install
+    bin.install @@BREW_BINARIES@@
+    doc.install "BUILD.json", "README.md", "CHANGELOG.md", "wolf-toolchain.toml"
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/@@VERSION_COMMAND@@")
+  end
+end

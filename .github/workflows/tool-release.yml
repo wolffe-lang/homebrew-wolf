@@ -1,0 +1,156 @@
+name: tool release (draft only)
+on:
+  workflow_call:
+    inputs:
+      config:
+        type: string
+        required: true
+      infrastructure-revision:
+        type: string
+        required: true
+      tested-sha:
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: tool-release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: immutable gate and infrastructure identities
+        env:
+          TESTED_SHA: ${{ inputs.tested-sha }}
+          INFRA_REV: ${{ inputs.infrastructure-revision }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_TYPE" = tag
+          test "$TESTED_SHA" = "$GITHUB_SHA"
+          [[ "$INFRA_REV" =~ ^[0-9a-f]{40}$ ]]
+      - uses: actions/checkout@v4
+        with:
+          repository: wolffe-lang/homebrew-wolf
+          ref: ${{ inputs.infrastructure-revision }}
+          path: release-infrastructure
+          persist-credentials: false
+      - name: tag, package and CHANGELOG
+        env:
+          CONFIG: ${{ inputs.config }}
+        run: python3 -I release-infrastructure/tools/tool-release validate --config "$CONFIG" --tag "$GITHUB_REF_NAME" --expect-sha "$GITHUB_SHA"
+      - name: carry only configuration to the clean runner
+        env:
+          CONFIG: ${{ inputs.config }}
+        run: |
+          mkdir -p target/release-config
+          cp -- "$CONFIG" target/release-config/release.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tool-release-config
+          path: target/release-config/release.json
+          if-no-files-found: error
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, host: x86_64-unknown-linux-gnu}
+          - {os: macos-15, host: aarch64-apple-darwin}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: wolffe-lang/homebrew-wolf
+          ref: ${{ inputs.infrastructure-revision }}
+          path: release-infrastructure
+          persist-credentials: false
+      - name: digest-pinned toolchain
+        run: tools/fetch-toolchain
+      - name: build, observe every version, pack twice
+        env:
+          CONFIG: ${{ inputs.config }}
+          HOST: ${{ matrix.host }}
+        run: python3 -I release-infrastructure/tools/tool-release build --config "$CONFIG" --tag "$GITHUB_REF_NAME" --expect-sha "$GITHUB_SHA" --host "$HOST"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tool-release-${{ matrix.host }}
+          path: |
+            target/dist/*.tar.gz
+            target/dist/*.tar.gz.sha256
+          if-no-files-found: error
+  stage:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    outputs:
+      release-id: ${{ steps.stage.outputs.release-id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: wolffe-lang/homebrew-wolf
+          ref: ${{ inputs.infrastructure-revision }}
+          path: release-infrastructure
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tool-release-*-*-*
+          path: target/release-assets
+          merge-multiple: true
+      - id: stage
+        name: create or refresh a draft; refuse an already public release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONFIG: ${{ inputs.config }}
+        run: python3 -I release-infrastructure/tools/tool-release stage --config "$CONFIG" --tag "$GITHUB_REF_NAME" --expect-sha "$GITHUB_SHA" --artifacts target/release-assets
+  smoke:
+    needs: [stage, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, host: x86_64-unknown-linux-gnu}
+          - {os: macos-15, host: aarch64-apple-darwin}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      # No product checkout and no toolchain. Only config and the draft's assets.
+      - uses: actions/checkout@v4
+        with:
+          repository: wolffe-lang/homebrew-wolf
+          ref: ${{ inputs.infrastructure-revision }}
+          path: release-infrastructure
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: tool-release-config
+          path: smoke-work
+      - name: download authenticated draft assets, verify, unpack and execute
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.stage.outputs.release-id }}
+          HOST: ${{ matrix.host }}
+        run: python3 -I release-infrastructure/tools/tool-release draft-smoke --root smoke-work --config release.json --tag "$GITHUB_REF_NAME" --expect-sha "$GITHUB_SHA" --release-id "$RELEASE_ID" --host "$HOST"
+      - name: leave publication to a separate human action
+        run: echo 'Draft assets verified. This workflow never publishes.' >> "$GITHUB_STEP_SUMMARY"

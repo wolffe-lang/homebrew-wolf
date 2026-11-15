@@ -1,0 +1,9 @@
+{
+  "name": "pelt",
+  "description": "POSIX shell written in wolf",
+  "license": "GPL-3.0-or-later",
+  "binaries": [
+    "pelt"
+  ],
+  "version_command": "pelt --version"
+}
