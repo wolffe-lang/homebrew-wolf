@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import sys
 import tempfile
 import urllib.request
@@ -73,7 +74,17 @@ def generate(product, version, digests):
     if not binaries or not all(b == '[' or re.fullmatch(r'[A-Za-z0-9_.+-]+', b) for b in binaries):
         fail('invalid installed binary name')
     values['BREW_BINARIES'] = ', '.join(json.dumps(b) for b in binaries)
-    values['AUR_BINARIES'] = '\n'.join(f'    install -Dm755 {b} "$pkgdir/usr/bin/{b}"' for b in binaries)
+    install_dir = config.get('aur_bindir', '/usr/bin')
+    if not re.fullmatch(r'/[A-Za-z0-9_./-]+', install_dir) or '..' in Path(install_dir).parts:
+        fail('invalid AUR executable directory')
+    values['AUR_BINARIES'] = '\n'.join(f'    install -Dm755 {b} "$pkgdir{install_dir}/{b}"' for b in binaries)
+    if config.get('dispatcher'):
+        if not re.fullmatch(r'[a-z][a-z0-9-]*', config['dispatcher']):
+            fail('invalid family dispatcher name')
+        values['DISPATCHER'] = config['dispatcher']
+        template = (ROOT / 'packaging/templates/family-launcher.sh.in').read_text()
+        values['AUR_LAUNCHER'] = render(template, dict(values, BIN_DIRECTORY=shlex.quote(install_dir)))
+        values['BREW_LAUNCHER'] = render(template, dict(values, BIN_DIRECTORY='__BORE_BIN_DIR__'))
     values['VERSION_COMMAND'] = config['version_command']
     if any("'" in config[k] or '\n' in config[k] or '"' in config[k] for k in ('description', 'license', 'version_command')):
         fail('metadata contains recipe quoting characters')

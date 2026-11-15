@@ -229,6 +229,35 @@ class PackagingTests(unittest.TestCase):
             self.assertNotIn(b'conflicts=(\'coreutils\'', content)
             self.assertNotIn(b'provides=(\'coreutils\'', content)
 
+    def test_bore_dispatcher_forwards_arguments_and_refuses_path_escape(self):
+        import re
+        import shlex
+        generate = runpy.run_path(str(PACKAGE))['generate']
+        result = generate('boreutils', '0.1.0', dict(MAC_SHA256='1' * 64, LINUX_SHA256='2' * 64))
+        recipe = result['aur/boreutils-bin/PKGBUILD'].decode()
+        formula = result['Formula/boreutils.rb'].decode()
+        aur = re.search(r"<<'BORE_LAUNCHER'\n(.*?)\nBORE_LAUNCHER", recipe, re.S).group(1)
+        brew = re.search(r"<<~'BORE_LAUNCHER'\n(.*?)\n    BORE_LAUNCHER", formula, re.S).group(1)
+        (ROOT / 'target').mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='family space ', dir=ROOT / 'target') as tmp:
+            directory = Path(tmp)
+            private = directory / 'private bins'
+            private.mkdir()
+            for name in ('printf', '['):
+                executable = private / name
+                executable.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+                executable.chmod(0o755)
+            for name, script in [('aur', aur.replace('bin_dir=/usr/lib/boreutils/bin', 'bin_dir=' + shlex.quote(str(private)))), ('brew', brew.replace('__BORE_BIN_DIR__', subprocess.check_output(['ruby', '-rshellwords', '-e', 'print ARGV[0].shellescape', str(private)], text=True)))]:
+                launcher = directory / name
+                launcher.write_text(script + '\n')
+                launcher.chmod(0o755)
+                env = dict(os.environ, HOME=str(directory), SHELL='/bin/sh')
+                self.assertEqual(subprocess.check_output([str(launcher), '--version'], env=env, text=True), 'bore (boreutils) 0.1.0\n')
+                self.assertEqual(subprocess.check_output([str(launcher), 'printf', 'a b', '*'], env=env, text=True), 'a b\n*\n')
+                self.assertEqual(subprocess.check_output([str(launcher), '[', 'x', ']'], env=env, text=True), 'x\n]\n')
+                self.assertEqual(subprocess.run([str(launcher), '../outside'], env=env, capture_output=True).returncode, 64)
+                self.assertEqual(subprocess.run([str(launcher), 'missing'], env=env, capture_output=True).returncode, 127)
+
     def test_lobo_byte_for_byte(self):
         p = subprocess.run([sys.executable, '-I', str(PACKAGE), '--product', 'lobo', '--version', '0.1.5',
                             '--offline', '--mac-sha256', '2aa3320da860d0c332c7aac133961a44529cdb3a15697f05ee88f1c851b9191c',

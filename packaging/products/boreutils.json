@@ -111,5 +111,11 @@
     "whoami",
     "yes"
   ],
-  "version_command": "[ --version"
+  "version_command": "bore --version",
+  "dispatcher": "bore",
+  "aur_bindir": "/usr/lib/boreutils/bin",
+  "hooks": {
+    "formula": "hooks/boreutils/formula.in",
+    "pkgbuild": "hooks/boreutils/pkgbuild.in"
+  }
 }

@@ -1,0 +1,26 @@
+pkgname=@@NAME@@-bin
+pkgver=@@VERSION@@
+pkgrel=1
+pkgdesc='@@DESC@@'
+arch=('x86_64')
+url='https://github.com/wolffe-lang/@@NAME@@'
+license=('@@LICENSE@@')
+depends=('gcc-libs' 'glibc')
+provides=("@@NAME@@=$pkgver")
+conflicts=('@@NAME@@')
+options=('!strip' '!debug')
+source_x86_64=("@@NAME@@-$pkgver-x86_64-unknown-linux-gnu.tar.gz::$url/releases/download/v$pkgver/@@NAME@@-$pkgver-x86_64-unknown-linux-gnu.tar.gz")
+sha256sums_x86_64=('@@LINUX_SHA256@@')
+
+package() {
+    cd "@@NAME@@-$pkgver-x86_64-unknown-linux-gnu"
+@@AUR_BINARIES@@
+    install -dm755 "$pkgdir/usr/bin"
+    cat > "$pkgdir/usr/bin/bore" <<'BORE_LAUNCHER'
+@@AUR_LAUNCHER@@BORE_LAUNCHER
+    chmod 755 "$pkgdir/usr/bin/bore"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    for f in BUILD.json README.md CHANGELOG.md wolf-toolchain.toml; do
+        install -Dm644 "$f" "$pkgdir/usr/share/doc/$pkgname/$f"
+    done
+}
