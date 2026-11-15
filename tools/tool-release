@@ -403,6 +403,11 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (ValueError, OSError, KeyError, subprocess.CalledProcessError, tarfile.TarError) as error:
+    except subprocess.CalledProcessError as error:
+        if error.stdout:
+            print(error.stdout, file=sys.stderr, end='' if error.stdout.endswith('\n') else '\n')
+        print(f'FAIL release-command: {error.cmd!r} exit={error.returncode}', file=sys.stderr)
+        sys.exit(error.returncode if 0 < error.returncode < 256 else 1)
+    except (ValueError, OSError, KeyError, tarfile.TarError) as error:
         print(error, file=sys.stderr)
         sys.exit(1)
