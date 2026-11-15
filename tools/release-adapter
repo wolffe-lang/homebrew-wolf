@@ -118,12 +118,19 @@ def main():
         caller = (root / '.github/workflows/release.yml').read_text()
         if 'uses: ./.github/workflows/release-gate.yml' not in caller or 'needs: gate' not in caller or 'tested-sha: ${{ needs.gate.outputs.tested-sha }}' not in caller:
             raise ValueError('draft caller is not bound to the local complete gate')
+    if not a.write:
+        manifest = re.sub(r'//[^\n]*', '', (root / c['manifest']).read_text())
+        versions = re.findall(r'\bversion\s*:\s*"([^"]+)"', manifest)
+        if len(versions) != 1:
+            raise ValueError('manifest needs one release version')
+        subprocess.run([sys.executable, '-I', str(Path(__file__).with_name('tool-release')),
+                        'validate', '--root', str(root), '--tag', 'v' + versions[0]], check=True)
     print(f'PASS release-adapter {c["name"]} profile={c["gate_profile"]} exact-ci-copy=yes')
 
 
 if __name__ == '__main__':
     try:
         main()
-    except (ValueError, KeyError, OSError, IndexError) as error:
+    except (ValueError, KeyError, OSError, IndexError, subprocess.CalledProcessError) as error:
         print('FAIL release-adapter: ' + str(error), file=sys.stderr)
         sys.exit(1)
