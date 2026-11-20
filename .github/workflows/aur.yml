@@ -65,7 +65,7 @@ concurrency:
 jobs:
   install:
     name: aur/${{ matrix.pkg }} (makepkg + pacman -U)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The source packages compile a compiler (wolf-lang: cargo xtask dist
     # and its smoke) and an interpreter plus its release test suite
     # (lupin's check()). Headroom, not an estimate.
@@ -192,7 +192,7 @@ jobs:
   live-drift:
     name: aur/ against the live AUR
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5

@@ -93,7 +93,7 @@ jobs:
           - { os: macos-latest,  formula: wolf }
           - { os: macos-latest,  formula: lupin }
           - { os: macos-latest,  formula: lobo }
-          - { os: ubuntu-latest, formula: lobo }
+          - { os: ubuntu-24.04, formula: lobo }
 
     steps:
       - uses: actions/checkout@v5
