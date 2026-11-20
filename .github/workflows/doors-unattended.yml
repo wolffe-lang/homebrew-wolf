@@ -142,7 +142,7 @@ jobs:
   # ---------------------------------------------------------------- #6 --
   aur-install:
     name: aur/lobo-bin (install + serve)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     container:
       image: archlinux:base-devel
@@ -222,7 +222,7 @@ jobs:
   # ---------------------------------------------------------------- #7 --
   linuxbrew-install:
     name: ${{ matrix.formula }} (linuxbrew, source)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Measured wolf 5m22s-7m31s and lupin 2m10s-3m23s over four runs (see
     # the header table). 180 is
     # deliberate headroom, not an estimate: a cold runner, a cache miss on
@@ -312,7 +312,7 @@ jobs:
   sleep-alarm:
     name: sleep-alarm (60-day schedule rule)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       actions: read
@@ -363,7 +363,7 @@ jobs:
   notify:
     needs: [aur-install, linuxbrew-install]
     if: failure() && github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       issues: write
     steps:
