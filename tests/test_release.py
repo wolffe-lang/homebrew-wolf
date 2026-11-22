@@ -204,6 +204,27 @@ class ReleaseTests(unittest.TestCase):
         source.write_text('fn main() {}\n')
         self.call('build', '--tag', 'v0.1.0', '--host', 'x86_64-unknown-linux-gnu', '--test-host', ok=False)
 
+    def test_smoke_does_not_hand_the_token_to_what_it_executes(self):
+        self.call('build', '--tag', 'v0.1.0', '--host', 'x86_64-unknown-linux-gnu', '--test-host')
+        out = self.root / 'target/dist/example-0.1.0-x86_64-unknown-linux-gnu.tar.gz'
+        module = runpy.run_path(str(RELEASE))
+        smoke = module['smoke']
+        namespace = smoke.__globals__
+        real = namespace['command']
+        seen = []
+
+        def spy(argv, cwd, env=None):
+            seen.append(dict(env or {}))
+            return real(argv, cwd, env=env)
+
+        with mock.patch.dict(namespace, command=spy):
+            with mock.patch.dict(os.environ, GH_TOKEN='secret-fixture', GITHUB_TOKEN='secret-fixture'):
+                smoke(self.root, self.config, 'v0.1.0', 'x86_64-unknown-linux-gnu', out.parent, True, None)
+        self.assertTrue(seen)
+        for env in seen:
+            self.assertNotIn('GH_TOKEN', env)
+            self.assertNotIn('GITHUB_TOKEN', env)
+
 
 class PackagingTests(unittest.TestCase):
     def test_render_ignores_non_scalar_product_metadata(self):
@@ -286,16 +307,35 @@ class PackagingTests(unittest.TestCase):
 
     def test_every_job_that_reads_a_draft_declares_write_access(self):
         # A draft release is visible only to a token with write access to contents, so a job that
-        # calls draft-smoke must say so, even though it writes nothing.
+        # downloads it must say so, even though it writes nothing.
         import re
         text = (ROOT / '.github/workflows/tool-release.yml').read_text()
         jobs = text.split('\njobs:\n', 1)[1]
         blocks = re.split(r'\n(?=  [a-z][a-z-]*:\n)', '\n' + jobs)
-        readers = [b for b in blocks if 'draft-smoke' in b]
-        self.assertTrue(readers, 'no job runs draft-smoke')
+        readers = [b for b in blocks if 'draft-download' in b or 'draft-smoke' in b]
+        self.assertTrue(readers, 'no job reads the draft')
         for block in readers:
             name = block.strip().split(':', 1)[0]
             self.assertRegex(block, r'permissions:\n\s+contents: write', f'job {name} reads the draft without contents: write')
+
+
+    def test_the_step_that_executes_downloaded_binaries_sees_no_token(self):
+        import re
+        text = (ROOT / '.github/workflows/tool-release.yml').read_text()
+        jobs = text.split('\njobs:\n', 1)[1]
+        smoke = [b for b in re.split(r'\n(?=  [a-z][a-z-]*:\n)', '\n' + jobs) if b.strip().startswith('smoke:')][0]
+        self.assertNotRegex(smoke, r'\n    env:', 'a job-level env would reach every step')
+        steps = re.split(r'\n(?=      - )', smoke)
+        downloads = [i for i, b in enumerate(steps) if 'tool-release draft-download' in b]
+        runs = [i for i, b in enumerate(steps) if re.search(r'tool-release smoke\b', b)]
+        self.assertEqual(len(downloads), 1, 'one step downloads and verifies the draft')
+        self.assertEqual(len(runs), 1, 'one step unpacks and executes it')
+        self.assertLess(downloads[0], runs[0])
+        self.assertIn('GH_TOKEN', steps[downloads[0]])
+        self.assertNotIn('draft-smoke', smoke, 'draft-smoke downloads and executes in one process')
+        executing = steps[runs[0]]
+        for word in ('GH_TOKEN', 'GITHUB_TOKEN', 'github.token', 'secrets.'):
+            self.assertNotIn(word, executing, f'the executing step names {word}')
 
 
 if __name__ == '__main__':
