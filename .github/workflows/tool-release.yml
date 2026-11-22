@@ -126,6 +126,10 @@ jobs:
         run: python3 -I release-infrastructure/tools/tool-release stage --config "$CONFIG" --tag "$GITHUB_REF_NAME" --expect-sha "$GITHUB_SHA" --artifacts target/release-assets
   smoke:
     needs: [stage, build]
+    # A draft release is visible only to a token with write access to contents, so reading it takes
+    # this permission. The job writes nothing: it downloads, verifies, unpacks and runs.
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
