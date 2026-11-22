@@ -218,7 +218,7 @@ class ReleaseTests(unittest.TestCase):
             return real(argv, cwd, env=env)
 
         with mock.patch.dict(namespace, command=spy):
-            with mock.patch.dict(os.environ, GH_TOKEN='secret-fixture', GITHUB_TOKEN='secret-fixture'):
+            with mock.patch.dict(os.environ, GH_TOKEN='secret-fixture', GITHUB_TOKEN='secret-fixture', GITHUB_ACTIONS='false'):
                 smoke(self.root, self.config, 'v0.1.0', 'x86_64-unknown-linux-gnu', out.parent, True, None)
         self.assertTrue(seen)
         for env in seen:
