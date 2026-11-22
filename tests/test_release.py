@@ -284,5 +284,19 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('public', (ROOT / '.github/workflows/tool-public-smoke.yml').read_text())
 
 
+    def test_every_job_that_reads_a_draft_declares_write_access(self):
+        # A draft release is visible only to a token with write access to contents, so a job that
+        # calls draft-smoke must say so, even though it writes nothing.
+        import re
+        text = (ROOT / '.github/workflows/tool-release.yml').read_text()
+        jobs = text.split('\njobs:\n', 1)[1]
+        blocks = re.split(r'\n(?=  [a-z][a-z-]*:\n)', '\n' + jobs)
+        readers = [b for b in blocks if 'draft-smoke' in b]
+        self.assertTrue(readers, 'no job runs draft-smoke')
+        for block in readers:
+            name = block.strip().split(':', 1)[0]
+            self.assertRegex(block, r'permissions:\n\s+contents: write', f'job {name} reads the draft without contents: write')
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
