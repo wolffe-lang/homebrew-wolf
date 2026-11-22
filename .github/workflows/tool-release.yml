@@ -127,7 +127,7 @@ jobs:
   smoke:
     needs: [stage, build]
     # A draft release is visible only to a token with write access to contents, so reading it takes
-    # this permission. The job writes nothing: it downloads, verifies, unpacks and runs.
+    # this permission. The job writes nothing; only the download step receives the token.
     permissions:
       contents: write
     strategy:
@@ -150,11 +150,16 @@ jobs:
         with:
           name: tool-release-config
           path: smoke-work
-      - name: download authenticated draft assets, verify, unpack and execute
+      - name: download authenticated draft assets and verify their digests
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ needs.stage.outputs.release-id }}
           HOST: ${{ matrix.host }}
-        run: python3 -I release-infrastructure/tools/tool-release draft-smoke --root smoke-work --config release.json --tag "$GITHUB_REF_NAME" --expect-sha "$GITHUB_SHA" --release-id "$RELEASE_ID" --host "$HOST"
+        run: python3 -I release-infrastructure/tools/tool-release draft-download --root smoke-work --config release.json --tag "$GITHUB_REF_NAME" --expect-sha "$GITHUB_SHA" --release-id "$RELEASE_ID" --host "$HOST"
+      # No token in this step's environment: it unpacks and executes what was downloaded.
+      - name: unpack and execute the downloaded archive
+        env:
+          HOST: ${{ matrix.host }}
+        run: python3 -I release-infrastructure/tools/tool-release smoke --root smoke-work --config release.json --tag "$GITHUB_REF_NAME" --expect-sha "$GITHUB_SHA" --artifacts smoke-work/target/download --host "$HOST"
       - name: leave publication to a separate human action
         run: echo 'Draft assets verified. This workflow never publishes.' >> "$GITHUB_STEP_SUMMARY"

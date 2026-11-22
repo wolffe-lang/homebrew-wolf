@@ -269,7 +269,9 @@ def smoke(root, c, tag, host, artifacts, test_host, expect_sha=None):
             fail('observed version or named unavailable option differs from the archive BUILD record')
         home = Path(tmp) / 'home'
         home.mkdir()
-        env = dict(os.environ, HOME=str(home), SHELL='/bin/sh')
+        # What the archive ships is run with no token: only the download step holds one.
+        env = {k: v for k, v in os.environ.items() if k not in ('GH_TOKEN', 'GITHUB_TOKEN')}
+        env.update(HOME=str(home), SHELL='/bin/sh')
         # The executable must work without a compiler, source tree or project cwd.
         for argv in c['smoke']:
             argv = [s.replace('{bin}', str(directory)) for s in argv]
@@ -381,7 +383,7 @@ def download(root, c, tag, repo, host, release_id, public):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('action', choices=['validate', 'build', 'smoke', 'stage', 'draft-smoke', 'public-smoke'])
+    p.add_argument('action', choices=['validate', 'build', 'smoke', 'stage', 'draft-download', 'draft-smoke', 'public-smoke'])
     p.add_argument('--root', type=Path, default=Path.cwd())
     p.add_argument('--config', default='.github/release.json')
     p.add_argument('--tag', required=True)
@@ -402,6 +404,10 @@ def main():
         smoke(root, c, a.tag, a.host, a.artifacts, a.test_host, a.expect_sha)
     elif a.action == 'stage':
         stage(root, c, a.tag, a.repo, a.artifacts, a.expect_sha)
+    elif a.action == 'draft-download':
+        # Download and verify only; nothing is executed. The executing step runs `smoke` with no token.
+        out = download(root, c, a.tag, a.repo, a.host, a.release_id, False)
+        print(f'PASS release-draft-download {a.host} {out}')
     else:
         out = download(root, c, a.tag, a.repo, a.host, a.release_id, a.action == 'public-smoke')
         smoke(root, c, a.tag, a.host, out, a.test_host, a.expect_sha)
