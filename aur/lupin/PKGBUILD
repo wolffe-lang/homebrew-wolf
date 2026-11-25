@@ -49,7 +49,8 @@ check() {
     # because cargo stops at the first failing test binary, every target
     # after tests/differ_cli.rs too.
     #
-    # A third is skipped for the toolchain, not for lupin.
+    # A third is skipped for the toolchain, not for lupin, until
+    # wolf-interp#387 is fixed.
     # tests/build_stamp.rs's a_re_vendor_invalidates_the_stamp_too reads
     # cargo's build-script cache at <target>/debug/build/<pkg>-<hash>/output.
     # Rust 1.100.0 lays out the build directory differently, so the test finds
