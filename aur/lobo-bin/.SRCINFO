@@ -1,5 +1,5 @@
 pkgbase = lobo-bin
-	pkgdesc = A web server written in wolf: nginx-compatible configuration, prefork workers (release archive)
+	pkgdesc = A web server written in wolf: nginx-compatible configuration, prefork workers (release archive) (PLANT)
 	pkgver = 0.1.5
 	pkgrel = 1
 	url = https://github.com/wolffe-lang/lobo
