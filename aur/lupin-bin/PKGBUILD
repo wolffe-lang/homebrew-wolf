@@ -8,7 +8,7 @@ pkgdesc='The reference interpreter for the wolf language, and the compiler diffe
 arch=('x86_64' 'aarch64')
 url='https://github.com/wolffe-lang/wolf-interp'
 license=('GPL-3.0-or-later')
-# glibc floor: the 0.1.62 archives import at most GLIBC_2.34 (readelf -V,
+# glibc floor: the 0.1.63 archives import at most GLIBC_2.34 (readelf -V,
 # x86_64 and aarch64; built on Ubuntu 22.04 since 0.1.39, wolf-lang#447);
 # every Arch glibc meets that, so it stays unversioned.
 depends=('gcc-libs' 'glibc')
