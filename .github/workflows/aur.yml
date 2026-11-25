@@ -34,6 +34,17 @@
 # The weekly live-AUR install of `lobo-bin` in doors-unattended.yml stays:
 # that one proves what an AUR user gets, this one proves what we are
 # about to publish.
+#
+# `notify` is how a red finds a human. The Monday run is the one nobody
+# watches: from 2026-11-16 every scheduled run was red on aur/lupin (Rust
+# 1.100 changed the build layout under one of lupin's own tests,
+# wolf-interp#387) and nobody heard until a release PR ran the same job
+# (#56). It opens one issue per outage, or comments on the open one, as
+# doors-unattended's does; #18 asks the same of doors-fresh. It runs on a
+# schedule, or on a dispatch that asks with `notify=true` (which is how
+# the job itself is proven). Not on a pull request, whose author is
+# watching, and not on a trunk push, where `live-drift` is red by design
+# between a merge and its AUR push.
 
 name: aur
 
@@ -50,6 +61,11 @@ on:
   schedule:
     - cron: '47 6 * * 1'
   workflow_dispatch:
+    inputs:
+      notify:
+        description: 'If this run is red, open or update the red-run issue, as a scheduled run does'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -215,3 +231,38 @@ jobs:
             fi
           done
           exit $red
+
+  # A red that nobody looks at is not a gate (see the header). Idempotent:
+  # one issue per outage, not one per Monday. The title match is anchored
+  # at the start, so doors-unattended's issue never matches.
+  notify:
+    needs: [install, live-drift]
+    if: failure() && (github.event_name == 'schedule' || inputs.notify == true)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: open or update the red-run issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          INSTALL: ${{ needs.install.result }}
+          DRIFT: ${{ needs.live-drift.result }}
+        run: |
+          set -euo pipefail
+          PREFIX='aur: unattended run is red'
+          BODY=$(printf 'The %s run of aur failed on %s at %s.\n\n- run: %s\n- install (makepkg and pacman -U, every package): %s\n- live-drift (each aur/<pkg>/.SRCINFO against the live AUR): %s\n\nA red here is often upstream or Arch rather than a commit in this tap: each package is built from its pinned upstream release in the current Arch image, and compared with the live AUR. The run log names the failing package and step.\n' \
+            "$EVENT" "$REPO" "$SHA" "$RUN_URL" "$INSTALL" "$DRIFT")
+          existing=$(gh issue list --repo "$REPO" --state open --search "in:title \"$PREFIX\"" --json number,title \
+            | jq -r --arg p "$PREFIX" '[.[] | select(.title | startswith($p))][0].number // empty')
+          if [ -n "$existing" ]; then
+            echo "commenting on existing #$existing"
+            gh issue comment "$existing" --repo "$REPO" --body "$BODY"
+          else
+            echo "opening a new issue"
+            gh issue create --repo "$REPO" --title "$PREFIX ($(date -u +%Y-%m-%d))" --body "$BODY"
+          fi
